@@ -50,21 +50,6 @@ interface ActiveTool {
   args?: Record<string, unknown>
 }
 
-/** Priority order for picking which tool to display in the status pill. */
-const TOOL_DISPLAY_PRIORITY: Record<string, number> = {
-  bash: 10,
-  write: 9,
-  edit: 8,
-  task: 7,
-  read: 3,
-  glob: 2,
-  grep: 2,
-}
-
-function toolPriority(tool: string): number {
-  return TOOL_DISPLAY_PRIORITY[tool] ?? 5
-}
-
 /** Minimum interval (ms) between sidebar logs for the same file. */
 const FILE_EDIT_DEBOUNCE_MS = 500
 
@@ -211,10 +196,13 @@ export class CmuxStateCoordinator {
 
     if (this.options.config.logToolCalls) {
       const label = describeToolCall(tool, args)
+      const verbose = this.options.config.logToolCallsVerbose && args
+        ? ` ${JSON.stringify(args)}`
+        : ""
       await this.options.cmux.log({
         level: "progress",
         source: "opencode",
-        message: `${this.options.project.label}: running ${label}`,
+        message: `${this.options.project.label}: running ${label}${verbose}`,
       })
     }
 
@@ -235,17 +223,20 @@ export class CmuxStateCoordinator {
 
     if (this.options.config.logToolCalls) {
       const label = describeToolCall(tool, args)
+      const verbose = this.options.config.logToolCallsVerbose && args
+        ? ` ${JSON.stringify(args)}`
+        : ""
       await this.options.cmux.log({
         level: "info",
         source: "opencode",
-        message: `${this.options.project.label}: finished ${label}`,
+        message: `${this.options.project.label}: finished ${label}${verbose}`,
       })
     }
 
     await this.render()
   }
 
-  public async handleFileEdited(filePath: string): Promise<void> {
+  public async handleFileEdited(filePath: string, _sessionID?: string): Promise<void> {
     const relative = toRelativePath(filePath, this.options.project.root)
 
     // Debounce: skip if we logged the same file very recently
@@ -430,14 +421,6 @@ export class CmuxStateCoordinator {
       return active.tool
     }
 
-    // Multiple tools: show the highest-priority tool name
-    let best: ActiveTool | undefined
-    for (const active of this.activeTools.values()) {
-      if (!best || toolPriority(active.tool) > toolPriority(best.tool)) {
-        best = active
-      }
-    }
-
     return `${this.activeTools.size} tools`
   }
 
@@ -497,6 +480,11 @@ export class CmuxStateCoordinator {
         ? `working: ${toolSuffix}${subagentSuffix}`
         : `working${subagentSuffix}`
 
+      const todoSuffix =
+        this.todoState && this.todoState.total > 0
+          ? ` · ${this.todoState.completed}/${this.todoState.total} todos`
+          : ""
+
       return {
         status: {
           text: statusText,
@@ -506,7 +494,7 @@ export class CmuxStateCoordinator {
         progress: this.options.config.progressEnabled
           ? {
               value: this.progressTracker.estimate("working"),
-              label: `${this.options.project.label}: ${formatSessionLabel(this.primaryState.metadata)}`,
+              label: `${this.options.project.label}: ${formatSessionLabel(this.primaryState.metadata)}${todoSuffix}`,
             }
           : undefined,
       }

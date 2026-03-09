@@ -7,8 +7,6 @@ export type NormalizedEvent =
   | { type: "question.asked"; sessionID?: string; header: string }
   | { type: "question.resolved" }
   | { type: "permission.replied" }
-  | { type: "tool.started"; tool: string; args?: Record<string, unknown> }
-  | { type: "tool.completed"; tool: string; args?: Record<string, unknown> }
   | { type: "file.edited"; filePath: string; sessionID?: string }
   | { type: "session.created"; sessionID: string }
   | { type: "session.deleted"; sessionID: string }

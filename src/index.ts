@@ -90,7 +90,7 @@ const plugin: Plugin = async (ctx) => {
           return
 
         case "file.edited":
-          await coordinator.handleFileEdited(normalized.filePath)
+          await coordinator.handleFileEdited(normalized.filePath, normalized.sessionID)
           return
 
         case "session.created":
