@@ -52,4 +52,34 @@ describe("plugin initialization", () => {
     expect(hooks["tool.execute.before"]).toBeFunction()
     expect(hooks["tool.execute.after"]).toBeFunction()
   })
+
+  test("event hook does not throw on malformed events", async () => {
+    process.env.CMUX_WORKSPACE_ID = "workspace:test"
+
+    const hooks = await plugin(createFakeContext())
+
+    // These should not throw — the try/catch wrapping swallows errors
+    await expect(
+      hooks.event!({ event: null as any }),
+    ).resolves.toBeUndefined()
+
+    await expect(
+      hooks.event!({ event: { type: undefined } as any }),
+    ).resolves.toBeUndefined()
+  })
+
+  test("tool hooks do not throw on unexpected input", async () => {
+    process.env.CMUX_WORKSPACE_ID = "workspace:test"
+
+    const hooks = await plugin(createFakeContext())
+
+    // tool.execute.before / after should not throw even with odd input
+    await expect(
+      hooks["tool.execute.before"]!({ tool: "bash" } as any, undefined as any),
+    ).resolves.toBeUndefined()
+
+    await expect(
+      hooks["tool.execute.after"]!({ tool: "bash" } as any, undefined as any),
+    ).resolves.toBeUndefined()
+  })
 })

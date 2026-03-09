@@ -18,6 +18,7 @@ describe("loadConfig", () => {
     expect(config.logFileEdits).toBe(true)
     expect(config.logSessionLifecycle).toBe(true)
     expect(config.logTodos).toBe(true)
+    expect(config.staleSessionTimeoutMs).toBe(0)
   })
 
   test("parses boolean overrides", () => {
@@ -46,5 +47,29 @@ describe("loadConfig", () => {
     expect(config.logFileEdits).toBe(false)
     expect(config.logSessionLifecycle).toBe(false)
     expect(config.logTodos).toBe(false)
+  })
+
+  test("parses staleSessionTimeoutMs from env", () => {
+    const config = loadConfig({
+      OPENCODE_CMUX_STALE_TIMEOUT: "30000",
+    })
+
+    expect(config.staleSessionTimeoutMs).toBe(30000)
+  })
+
+  test("staleSessionTimeoutMs falls back on invalid number", () => {
+    const config = loadConfig({
+      OPENCODE_CMUX_STALE_TIMEOUT: "not-a-number",
+    })
+
+    expect(config.staleSessionTimeoutMs).toBe(0)
+  })
+
+  test("staleSessionTimeoutMs handles empty string", () => {
+    const config = loadConfig({
+      OPENCODE_CMUX_STALE_TIMEOUT: "",
+    })
+
+    expect(config.staleSessionTimeoutMs).toBe(0)
   })
 })

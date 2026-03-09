@@ -56,6 +56,15 @@ const FILE_EDIT_DEBOUNCE_MS = 500
 /** Maximum number of recently edited files to track. */
 const MAX_RECENT_FILES = 10
 
+/** Minimum interval (ms) between render() calls to cmux. */
+const RENDER_THROTTLE_MS = 200
+
+/** Maximum sidebar log calls per second. */
+const LOG_RATE_LIMIT = 5
+
+/** Window size (ms) for the log rate limiter. */
+const LOG_RATE_WINDOW_MS = 1000
+
 export class CmuxStateCoordinator {
   private readonly sessions = new Map<string, SessionRuntime>()
   private primaryState?: SessionRuntime
@@ -69,12 +78,31 @@ export class CmuxStateCoordinator {
   private todoState?: { total: number; completed: number }
   private readonly progressTracker = new ProgressTracker()
 
+  /** Render throttle state */
+  private lastRenderAt = 0
+  private renderTimer?: ReturnType<typeof setTimeout>
+  private renderPending = false
+
+  /** Sidebar log rate limiter — timestamps of recent log calls */
+  private readonly logTimestamps: number[] = []
+
+  /** Stale session watchdog */
+  private lastEventAt = 0
+  private staleTimer?: ReturnType<typeof setTimeout>
+
   public constructor(private readonly options: CoordinatorOptions) {}
+
+  /** Call this from every public handler to keep the watchdog alive. */
+  private touchEventTimestamp(): void {
+    this.lastEventAt = Date.now()
+    this.resetStaleTimer()
+  }
 
   public async handleSessionStatus(
     sessionID: string,
     status: string,
   ): Promise<void> {
+    this.touchEventTimestamp()
     if (status === "busy") {
       await this.markBusy(sessionID)
       return
@@ -86,10 +114,12 @@ export class CmuxStateCoordinator {
   }
 
   public async handleSessionIdle(sessionID: string): Promise<void> {
+    this.touchEventTimestamp()
     await this.markIdle(sessionID)
   }
 
   public async handleSessionError(sessionID?: string): Promise<void> {
+    this.touchEventTimestamp()
     const metadata = await this.resolveSession(sessionID ?? "unknown-session")
     if (!metadata) return
 
@@ -110,7 +140,7 @@ export class CmuxStateCoordinator {
       })
     }
 
-    await this.options.cmux.log({
+    await this.throttledLog({
       level: "error",
       source: "opencode",
       message: `${this.options.project.label}: error in ${formatSessionLabel(metadata)}`,
@@ -123,6 +153,7 @@ export class CmuxStateCoordinator {
     header: string,
     sessionID?: string,
   ): Promise<void> {
+    this.touchEventTimestamp()
     const nextQuestion = { header, sessionID }
     if (
       this.pendingQuestion?.header === nextQuestion.header &&
@@ -133,7 +164,7 @@ export class CmuxStateCoordinator {
 
     this.pendingQuestion = nextQuestion
 
-    await this.options.cmux.log({
+    await this.throttledLog({
       level: "info",
       source: "opencode",
       message: `${this.options.project.label}: question - ${header}`,
@@ -150,17 +181,19 @@ export class CmuxStateCoordinator {
   }
 
   public async handleQuestionResolved(): Promise<void> {
+    this.touchEventTimestamp()
     if (!this.pendingQuestion) return
     this.pendingQuestion = undefined
     await this.render()
   }
 
   public async handlePermissionAsked(title: string): Promise<void> {
+    this.touchEventTimestamp()
     if (this.pendingPermission?.title === title) return
 
     this.pendingPermission = { title }
 
-    await this.options.cmux.log({
+    await this.throttledLog({
       level: "warning",
       source: "opencode",
       message: `${this.options.project.label}: waiting for permission - ${title}`,
@@ -177,6 +210,7 @@ export class CmuxStateCoordinator {
   }
 
   public async handlePermissionResolved(): Promise<void> {
+    this.touchEventTimestamp()
     if (!this.pendingPermission) return
     this.pendingPermission = undefined
     await this.render()
@@ -186,6 +220,7 @@ export class CmuxStateCoordinator {
     tool: string,
     args?: Record<string, unknown>,
   ): Promise<void> {
+    this.touchEventTimestamp()
     const callID = `${tool}-${++this.toolCallCount}`
     this.activeTools.set(callID, {
       tool,
@@ -199,7 +234,7 @@ export class CmuxStateCoordinator {
       const verbose = this.options.config.logToolCallsVerbose && args
         ? ` ${JSON.stringify(args)}`
         : ""
-      await this.options.cmux.log({
+      await this.throttledLog({
         level: "progress",
         source: "opencode",
         message: `${this.options.project.label}: running ${label}${verbose}`,
@@ -213,6 +248,7 @@ export class CmuxStateCoordinator {
     tool: string,
     args?: Record<string, unknown>,
   ): Promise<void> {
+    this.touchEventTimestamp()
     // Remove the oldest matching active tool entry
     for (const [callID, active] of this.activeTools) {
       if (active.tool === tool) {
@@ -226,7 +262,7 @@ export class CmuxStateCoordinator {
       const verbose = this.options.config.logToolCallsVerbose && args
         ? ` ${JSON.stringify(args)}`
         : ""
-      await this.options.cmux.log({
+      await this.throttledLog({
         level: "info",
         source: "opencode",
         message: `${this.options.project.label}: finished ${label}${verbose}`,
@@ -237,6 +273,7 @@ export class CmuxStateCoordinator {
   }
 
   public async handleFileEdited(filePath: string, _sessionID?: string): Promise<void> {
+    this.touchEventTimestamp()
     const relative = toRelativePath(filePath, this.options.project.root)
 
     // Debounce: skip if we logged the same file very recently
@@ -258,7 +295,7 @@ export class CmuxStateCoordinator {
     }
 
     if (this.options.config.logFileEdits) {
-      await this.options.cmux.log({
+      await this.throttledLog({
         level: "progress",
         source: "opencode",
         message: `${this.options.project.label}: edited ${relative}`,
@@ -267,12 +304,13 @@ export class CmuxStateCoordinator {
   }
 
   public async handleSessionCreated(sessionID: string): Promise<void> {
+    this.touchEventTimestamp()
     // Eagerly resolve and cache session metadata so subsequent events are faster
     const metadata = await this.resolveSession(sessionID)
 
     if (this.options.config.logSessionLifecycle) {
       const label = metadata ? formatSessionLabel(metadata) : sessionID
-      await this.options.cmux.log({
+      await this.throttledLog({
         level: "info",
         source: "opencode",
         message: `${this.options.project.label}: session started - ${label}`,
@@ -281,6 +319,7 @@ export class CmuxStateCoordinator {
   }
 
   public async handleSessionDeleted(sessionID: string): Promise<void> {
+    this.touchEventTimestamp()
     const existing = this.sessions.get(sessionID)
     this.sessions.delete(sessionID)
 
@@ -294,7 +333,7 @@ export class CmuxStateCoordinator {
       const label = existing
         ? formatSessionLabel(existing.metadata)
         : sessionID
-      await this.options.cmux.log({
+      await this.throttledLog({
         level: "info",
         source: "opencode",
         message: `${this.options.project.label}: session deleted - ${label}`,
@@ -305,10 +344,11 @@ export class CmuxStateCoordinator {
   }
 
   public async handleSessionCompacted(sessionID: string): Promise<void> {
+    this.touchEventTimestamp()
     if (this.options.config.logSessionLifecycle) {
       const metadata = await this.resolveSession(sessionID)
       const label = metadata ? formatSessionLabel(metadata) : sessionID
-      await this.options.cmux.log({
+      await this.throttledLog({
         level: "info",
         source: "opencode",
         message: `${this.options.project.label}: session compacted - ${label}`,
@@ -317,13 +357,14 @@ export class CmuxStateCoordinator {
   }
 
   public async handleTodoUpdated(items: TodoItem[]): Promise<void> {
+    this.touchEventTimestamp()
     const total = items.length
     const completed = items.filter((item) => item.completed).length
     this.todoState = { total, completed }
     this.progressTracker.updateTodos(total, completed)
 
     if (this.options.config.logTodos) {
-      await this.options.cmux.log({
+      await this.throttledLog({
         level: "progress",
         source: "opencode",
         message: `${this.options.project.label}: todos: ${completed}/${total} complete`,
@@ -340,16 +381,17 @@ export class CmuxStateCoordinator {
 
     if (metadata.kind === "primary") {
       this.primaryState = this.sessions.get(sessionID)
+      this.resetStaleTimer()
       if (previous?.activity !== "busy") {
         this.progressTracker.start()
-        await this.options.cmux.log({
+        await this.throttledLog({
           level: "progress",
           source: "opencode",
           message: `${this.options.project.label}: working on ${formatSessionLabel(metadata)}`,
         })
       }
     } else if (this.options.config.logSubagents && previous?.activity !== "busy") {
-      await this.options.cmux.log({
+      await this.throttledLog({
         level: "info",
         source: "opencode",
         message: `${this.options.project.label}: subagent started - ${formatSessionLabel(metadata)}`,
@@ -375,7 +417,7 @@ export class CmuxStateCoordinator {
 
       if (previous?.activity === "busy") {
         this.progressTracker.reset()
-        await this.options.cmux.log({
+        await this.throttledLog({
           level: "success",
           source: "opencode",
           message: `${this.options.project.label}: done - ${formatSessionLabel(metadata)}`,
@@ -387,7 +429,7 @@ export class CmuxStateCoordinator {
       }
     } else {
       if (this.options.config.logSubagents && previous?.activity === "busy") {
-        await this.options.cmux.log({
+        await this.throttledLog({
           level: "success",
           source: "opencode",
           message: `${this.options.project.label}: subagent finished - ${formatSessionLabel(metadata)}`,
@@ -530,10 +572,112 @@ export class CmuxStateCoordinator {
   }
 
   private async render(): Promise<void> {
+    const now = Date.now()
+    const elapsed = now - this.lastRenderAt
+
+    if (elapsed >= RENDER_THROTTLE_MS) {
+      // Enough time has passed — render immediately
+      await this.renderNow()
+    } else if (!this.renderPending) {
+      // Schedule a deferred render
+      this.renderPending = true
+      this.renderTimer = setTimeout(async () => {
+        this.renderPending = false
+        this.renderTimer = undefined
+        await this.renderNow()
+      }, RENDER_THROTTLE_MS - elapsed)
+    }
+    // If renderPending is already true, do nothing — the timer will pick up the latest state
+  }
+
+  private async renderNow(): Promise<void> {
+    this.lastRenderAt = Date.now()
     const next = this.buildSnapshot()
     await this.applyStatus(next)
     await this.applyProgress(next)
     this.currentSnapshot = next
+  }
+
+  /**
+   * Rate-limited sidebar log. Drops messages that exceed the rate limit.
+   * Returns true if the message was sent, false if it was rate-limited.
+   */
+  private async throttledLog(payload: Parameters<CmuxClient["log"]>[0]): Promise<boolean> {
+    const now = Date.now()
+    const cutoff = now - LOG_RATE_WINDOW_MS
+
+    // Evict old timestamps
+    while (this.logTimestamps.length > 0 && this.logTimestamps[0] <= cutoff) {
+      this.logTimestamps.shift()
+    }
+
+    if (this.logTimestamps.length >= LOG_RATE_LIMIT) {
+      return false
+    }
+
+    this.logTimestamps.push(now)
+    await this.options.cmux.log(payload)
+    return true
+  }
+
+  /**
+   * Stale session watchdog. If enabled and the primary session is busy,
+   * clears stuck "working" state after the configured timeout.
+   */
+  private resetStaleTimer(): void {
+    if (this.staleTimer) {
+      clearTimeout(this.staleTimer)
+      this.staleTimer = undefined
+    }
+
+    const timeoutMs = this.options.config.staleSessionTimeoutMs
+    if (!timeoutMs || timeoutMs <= 0) return
+    if (this.primaryState?.activity !== "busy") return
+
+    this.staleTimer = setTimeout(async () => {
+      // Only act if the primary session is still busy and no events have arrived
+      if (
+        this.primaryState?.activity === "busy" &&
+        Date.now() - this.lastEventAt >= timeoutMs
+      ) {
+        const metadata = this.primaryState.metadata
+        this.setSessionActivity(metadata, "idle")
+        this.primaryState = this.sessions.get(metadata.id)
+        this.pendingQuestion = undefined
+        this.pendingPermission = undefined
+        this.progressTracker.reset()
+
+        await this.options.cmux.log({
+          level: "warning",
+          source: "opencode",
+          message: `${this.options.project.label}: stale session cleared - ${formatSessionLabel(metadata)} (no events for ${Math.round(timeoutMs / 1000)}s)`,
+        })
+
+        await this.renderNow()
+      }
+    }, timeoutMs)
+  }
+
+  /**
+   * Immediately execute any pending deferred render.
+   * Useful for cleanup and for tests that need to assert after rapid state changes.
+   */
+  public async flush(): Promise<void> {
+    if (this.renderPending && this.renderTimer) {
+      clearTimeout(this.renderTimer)
+      this.renderTimer = undefined
+      this.renderPending = false
+      await this.renderNow()
+    }
+  }
+
+  /** Cancel pending timers. Useful for cleanup in tests. */
+  public async dispose(): Promise<void> {
+    await this.flush()
+    if (this.staleTimer) {
+      clearTimeout(this.staleTimer)
+      this.staleTimer = undefined
+    }
   }
 
   private async applyStatus(next: PresentationSnapshot): Promise<void> {

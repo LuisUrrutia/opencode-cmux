@@ -83,6 +83,7 @@ function createCoordinator(sessions: Record<string, SessionMetadata>) {
     logFileEdits: true,
     logSessionLifecycle: true,
     logTodos: true,
+    staleSessionTimeoutMs: 0,
   }
   const coordinator = new CmuxStateCoordinator({
     cmux,
@@ -120,16 +121,17 @@ describe("CmuxStateCoordinator", () => {
         color: "#f59e0b",
       },
     })
-    expect(cmux.calls).toContainEqual({
-      type: "setProgress",
-      payload: {
-        value: 0.1,
-        label: "demo: Implement feature",
-      },
-    })
+
+    // Progress value is time-dependent, so use closeTo for the value
+    const busyProgress = cmux.calls.find(
+      (c) => c.type === "setProgress" && c.payload.label === "demo: Implement feature",
+    )
+    expect(busyProgress).toBeDefined()
+    expect(busyProgress!.payload.value).toBeCloseTo(0.1, 1)
 
     cmux.reset()
     await coordinator.handleSessionStatus("primary", "idle")
+    await coordinator.flush()
 
     expect(cmux.calls).toContainEqual({
       type: "notify",
@@ -147,13 +149,13 @@ describe("CmuxStateCoordinator", () => {
         color: "#22c55e",
       },
     })
-    expect(cmux.calls).toContainEqual({
-      type: "setProgress",
-      payload: {
-        value: 1,
-        label: "demo: done",
-      },
-    })
+
+    // Progress value at idle is 1.0
+    const doneProgress = cmux.calls.find(
+      (c) => c.type === "setProgress" && c.payload.label === "demo: done",
+    )
+    expect(doneProgress).toBeDefined()
+    expect(doneProgress!.payload.value).toBeCloseTo(1.0, 1)
   })
 
   test("overlays question state and restores working status with subagent count", async () => {
@@ -173,6 +175,7 @@ describe("CmuxStateCoordinator", () => {
 
     await coordinator.handleSessionStatus("primary", "busy")
     await coordinator.handleSessionStatus("subagent", "busy")
+    await coordinator.flush()
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
@@ -186,6 +189,7 @@ describe("CmuxStateCoordinator", () => {
 
     cmux.reset()
     await coordinator.handleQuestionAsked("Approve release note?", "primary")
+    await coordinator.flush()
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
@@ -206,6 +210,7 @@ describe("CmuxStateCoordinator", () => {
 
     cmux.reset()
     await coordinator.handleQuestionResolved()
+    await coordinator.flush()
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
@@ -231,6 +236,7 @@ describe("CmuxStateCoordinator", () => {
     cmux.reset()
 
     await coordinator.handleToolStarted("bash", { command: "npm test" })
+    await coordinator.flush()
 
     // Status should now show "working: bash"
     expect(cmux.calls).toContainEqual({
@@ -265,9 +271,11 @@ describe("CmuxStateCoordinator", () => {
 
     await coordinator.handleSessionStatus("primary", "busy")
     await coordinator.handleToolStarted("bash", { command: "npm test" })
+    await coordinator.flush()
     cmux.reset()
 
     await coordinator.handleToolCompleted("bash", { command: "npm test" })
+    await coordinator.flush()
 
     // Status should revert to just "working" (no tool suffix)
     expect(cmux.calls).toContainEqual({
@@ -307,6 +315,7 @@ describe("CmuxStateCoordinator", () => {
 
     // Trigger a re-render by starting a third tool
     await coordinator.handleToolStarted("glob", { pattern: "**/*.ts" })
+    await coordinator.flush()
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
@@ -336,10 +345,12 @@ describe("CmuxStateCoordinator", () => {
 
     // Start a different bash tool
     await coordinator.handleToolStarted("bash", { command: "npm build" })
+    await coordinator.flush()
     cmux.reset()
 
     // Complete it — should only remove one entry
     await coordinator.handleToolCompleted("bash", { command: "npm build" })
+    await coordinator.flush()
 
     // Should show no tools, just "working"
     expect(cmux.calls).toContainEqual({
@@ -402,6 +413,7 @@ describe("CmuxStateCoordinator", () => {
     cmux.reset()
 
     await coordinator.handleToolStarted("bash", { command: "npm test" })
+    await coordinator.flush()
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
@@ -561,6 +573,7 @@ describe("CmuxStateCoordinator", () => {
     cmux.reset()
 
     await coordinator.handleSessionDeleted("primary")
+    await coordinator.flush()
 
     expect(cmux.calls).toContainEqual({
       type: "log",
@@ -591,6 +604,7 @@ describe("CmuxStateCoordinator", () => {
     cmux.reset()
 
     await coordinator.handleSessionDeleted("primary")
+    await coordinator.flush()
 
     // Should clear progress since primary is gone
     expect(cmux.calls).toContainEqual({
@@ -703,5 +717,226 @@ describe("CmuxStateCoordinator", () => {
       (c) => c.type === "log" && c.payload.message.includes("todos"),
     )
     expect(logCalls).toHaveLength(0)
+  })
+
+  // --- Phase 6: Resilience tests ---
+
+  test("render throttle coalesces rapid renders into one", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    // First handler: render fires immediately (no prior render)
+    await coordinator.handleSessionStatus("primary", "busy")
+
+    const statusCallsAfterFirst = cmux.calls.filter(
+      (c) => c.type === "setStatus",
+    ).length
+
+    // Fire several rapid tool starts — renders should be deferred
+    await coordinator.handleToolStarted("bash", { command: "npm test" })
+    await coordinator.handleToolStarted("read", { filePath: "src/index.ts" })
+    await coordinator.handleToolStarted("glob", { pattern: "**/*.ts" })
+
+    // Before flush, only the first render's setStatus should exist
+    // (subsequent renders are pending)
+    const statusCallsBeforeFlush = cmux.calls.filter(
+      (c) => c.type === "setStatus",
+    ).length
+    expect(statusCallsBeforeFlush).toBe(statusCallsAfterFirst)
+
+    // Flush forces the deferred render — only ONE additional setStatus
+    await coordinator.flush()
+
+    const statusCallsAfterFlush = cmux.calls.filter(
+      (c) => c.type === "setStatus",
+    ).length
+    expect(statusCallsAfterFlush).toBe(statusCallsAfterFirst + 1)
+
+    // The final status should reflect 3 active tools
+    const lastStatus = cmux.calls
+      .filter((c) => c.type === "setStatus")
+      .pop()!
+    expect(lastStatus).toEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "working: 3 tools",
+        icon: "terminal",
+        color: "#f59e0b",
+      },
+    })
+  })
+
+  test("sidebar log rate limiter drops excess messages", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    // Fire many rapid tool starts — each generates a log via throttledLog
+    // Rate limit is 5 per 1000ms, so logs 6+ should be dropped
+    for (let i = 0; i < 10; i++) {
+      await coordinator.handleToolStarted("bash", { command: `cmd-${i}` })
+    }
+
+    const logCalls = cmux.calls.filter((c) => c.type === "log")
+    // Should have at most 5 log calls (rate limit), not 10
+    expect(logCalls.length).toBeLessThanOrEqual(5)
+    expect(logCalls.length).toBeGreaterThan(0)
+  })
+
+  test("stale session watchdog fires after timeout", async () => {
+    const { coordinator, cmux, config } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    // Enable stale session timeout at 50ms for fast test
+    config.staleSessionTimeoutMs = 50
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.flush()
+
+    // Confirm we're in "working" state
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "working",
+        icon: "terminal",
+        color: "#f59e0b",
+      },
+    })
+
+    cmux.reset()
+
+    // Wait for the stale timer to fire
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    // Should have logged a stale warning
+    const staleLogs = cmux.calls.filter(
+      (c) =>
+        c.type === "log" &&
+        c.payload.message.includes("stale session cleared"),
+    )
+    expect(staleLogs.length).toBe(1)
+
+    // Should have rendered — session should now be idle/done
+    const statusCalls = cmux.calls.filter((c) => c.type === "setStatus")
+    expect(statusCalls.length).toBeGreaterThan(0)
+    const lastStatus = statusCalls.pop()!
+    expect(lastStatus).toEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "done",
+        icon: "check-circle",
+        color: "#22c55e",
+      },
+    })
+
+    await coordinator.dispose()
+  })
+
+  test("stale session watchdog does not fire when disabled", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    // staleSessionTimeoutMs defaults to 0 (disabled) in createCoordinator
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.flush()
+    cmux.reset()
+
+    // Wait a bit — no stale timer should fire
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    const staleLogs = cmux.calls.filter(
+      (c) =>
+        c.type === "log" &&
+        c.payload.message.includes("stale session cleared"),
+    )
+    expect(staleLogs.length).toBe(0)
+
+    await coordinator.dispose()
+  })
+
+  test("stale session watchdog resets on new events", async () => {
+    const { coordinator, cmux, config } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    // Enable stale session timeout at 80ms
+    config.staleSessionTimeoutMs = 80
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.flush()
+
+    // Wait 50ms, then send another event to reset the timer
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await coordinator.handleToolStarted("bash", { command: "npm test" })
+
+    // Wait another 50ms — total 100ms from start, but only 50ms from last event
+    // Timer should NOT have fired yet (80ms from last event)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const staleLogs = cmux.calls.filter(
+      (c) =>
+        c.type === "log" &&
+        c.payload.message.includes("stale session cleared"),
+    )
+    expect(staleLogs.length).toBe(0)
+
+    await coordinator.dispose()
+  })
+
+  test("dispose cancels pending timers", async () => {
+    const { coordinator, cmux, config } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    config.staleSessionTimeoutMs = 50
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.flush()
+    cmux.reset()
+
+    // Dispose before the stale timer would fire
+    await coordinator.dispose()
+
+    // Wait past the stale timeout
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    // No stale warning should have been logged
+    const staleLogs = cmux.calls.filter(
+      (c) =>
+        c.type === "log" &&
+        c.payload.message.includes("stale session cleared"),
+    )
+    expect(staleLogs.length).toBe(0)
   })
 })

@@ -8,7 +8,11 @@
 - Tracks the active project and primary agent session in the cmux sidebar.
 - Distinguishes subagent lifecycle events from primary-session completion to reduce notification spam.
 - Uses sidebar status pills, logs, and progress bars for working, waiting, question, done, and error states.
-- Leaves room for future socket-backed or multi-workspace coordination without changing the plugin contract.
+- Shows real-time tool execution in sidebar status (e.g., "working: bash" or "working: 2 tools").
+- Logs file edits to the sidebar with deduplication for rapid consecutive edits to the same file.
+- Tracks session lifecycle events (created, deleted, compacted) and todo list progress.
+- Dynamic progress estimation based on tool call count, elapsed time, and todo completion.
+- Render throttling, sidebar log rate limiting, and stale session cleanup for resilience under load.
 
 ## Requirements
 
@@ -77,10 +81,16 @@ The first version uses environment variables so it works with either local plugi
 | `OPENCODE_CMUX_STATUS_KEY` | `opencode` | Sidebar status key namespace. |
 | `OPENCODE_CMUX_NOTIFY_SUBAGENTS` | `false` | Notify on subagent completion and errors. |
 | `OPENCODE_CMUX_LOG_SUBAGENTS` | `true` | Log subagent lifecycle events to the sidebar. |
-| `OPENCODE_CMUX_PROGRESS` | `true` | Show coarse state-based progress updates. |
+| `OPENCODE_CMUX_PROGRESS` | `true` | Show activity-based progress updates. |
 | `OPENCODE_CMUX_KEEP_DONE_STATUS` | `true` | Keep the `done` state visible after completion. |
 | `OPENCODE_CMUX_NOTIFY_QUESTIONS` | `true` | Notify when the agent asks a question. |
 | `OPENCODE_CMUX_NOTIFY_PERMISSIONS` | `true` | Notify when OpenCode needs permission approval. |
+| `OPENCODE_CMUX_LOG_TOOLS` | `true` | Log tool execution start/finish to the sidebar. |
+| `OPENCODE_CMUX_LOG_TOOLS_VERBOSE` | `false` | Include full tool arguments in log entries. |
+| `OPENCODE_CMUX_LOG_FILE_EDITS` | `true` | Log file edits to the sidebar. |
+| `OPENCODE_CMUX_LOG_SESSION_LIFECYCLE` | `true` | Log session created/deleted/compacted events. |
+| `OPENCODE_CMUX_LOG_TODOS` | `true` | Log todo list progress to the sidebar. |
+| `OPENCODE_CMUX_STALE_TIMEOUT` | `0` | Timeout in ms to clear stuck "working" states. `0` disables. |
 
 Boolean variables accept `1`, `true`, `yes`, or `on` for true and `0`, `false`, `no`, or `off` for false.
 
@@ -94,5 +104,4 @@ bun run build
 ## Roadmap
 
 - Add an optional socket-backed cmux transport.
-- Support richer progress updates if OpenCode exposes more granular work state.
 - Expand beyond the current workspace when there is a clear multi-workspace coordination model.

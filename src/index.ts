@@ -53,74 +53,99 @@ const plugin: Plugin = async (ctx) => {
     socketPath: environment.socketPath,
   })
 
+  /** Best-effort error logging — never throws. */
+  function logHookError(hook: string, err: unknown): void {
+    try {
+      logger.log("error", `Hook "${hook}" failed: ${err}`)
+    } catch {
+      // Swallow — logger itself may be broken
+    }
+  }
+
   return {
     async event({ event }) {
-      const normalized = normalizeEvent(event)
-      if (!normalized) return
+      try {
+        const normalized = normalizeEvent(event)
+        if (!normalized) return
 
-      switch (normalized.type) {
-        case "session.status":
-          await coordinator.handleSessionStatus(
-            normalized.sessionID,
-            normalized.status,
-          )
-          return
+        switch (normalized.type) {
+          case "session.status":
+            await coordinator.handleSessionStatus(
+              normalized.sessionID,
+              normalized.status,
+            )
+            return
 
-        case "session.idle":
-          await coordinator.handleSessionIdle(normalized.sessionID)
-          return
+          case "session.idle":
+            await coordinator.handleSessionIdle(normalized.sessionID)
+            return
 
-        case "session.error":
-          await coordinator.handleSessionError(normalized.sessionID)
-          return
+          case "session.error":
+            await coordinator.handleSessionError(normalized.sessionID)
+            return
 
-        case "question.asked":
-          await coordinator.handleQuestionAsked(
-            normalized.header,
-            normalized.sessionID,
-          )
-          return
+          case "question.asked":
+            await coordinator.handleQuestionAsked(
+              normalized.header,
+              normalized.sessionID,
+            )
+            return
 
-        case "question.resolved":
-          await coordinator.handleQuestionResolved()
-          return
+          case "question.resolved":
+            await coordinator.handleQuestionResolved()
+            return
 
-        case "permission.replied":
-          await coordinator.handlePermissionResolved()
-          return
+          case "permission.replied":
+            await coordinator.handlePermissionResolved()
+            return
 
-        case "file.edited":
-          await coordinator.handleFileEdited(normalized.filePath, normalized.sessionID)
-          return
+          case "file.edited":
+            await coordinator.handleFileEdited(normalized.filePath, normalized.sessionID)
+            return
 
-        case "session.created":
-          await coordinator.handleSessionCreated(normalized.sessionID)
-          return
+          case "session.created":
+            await coordinator.handleSessionCreated(normalized.sessionID)
+            return
 
-        case "session.deleted":
-          await coordinator.handleSessionDeleted(normalized.sessionID)
-          return
+          case "session.deleted":
+            await coordinator.handleSessionDeleted(normalized.sessionID)
+            return
 
-        case "session.compacted":
-          await coordinator.handleSessionCompacted(normalized.sessionID)
-          return
+          case "session.compacted":
+            await coordinator.handleSessionCompacted(normalized.sessionID)
+            return
 
-        case "todo.updated":
-          await coordinator.handleTodoUpdated(normalized.items)
-          return
+          case "todo.updated":
+            await coordinator.handleTodoUpdated(normalized.items)
+            return
+        }
+      } catch (err) {
+        logHookError("event", err)
       }
     },
 
     async "permission.ask"(input) {
-      await coordinator.handlePermissionAsked(describePermissionRequest(input))
+      try {
+        await coordinator.handlePermissionAsked(describePermissionRequest(input))
+      } catch (err) {
+        logHookError("permission.ask", err)
+      }
     },
 
     async "tool.execute.before"(input, output) {
-      await coordinator.handleToolStarted(input.tool, output?.args)
+      try {
+        await coordinator.handleToolStarted(input.tool, output?.args)
+      } catch (err) {
+        logHookError("tool.execute.before", err)
+      }
     },
 
     async "tool.execute.after"(input, output) {
-      await coordinator.handleToolCompleted(input.tool, output?.args)
+      try {
+        await coordinator.handleToolCompleted(input.tool, output?.args)
+      } catch (err) {
+        logHookError("tool.execute.after", err)
+      }
     },
   }
 }

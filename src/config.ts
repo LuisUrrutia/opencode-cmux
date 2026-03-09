@@ -12,6 +12,7 @@ export interface PluginConfig {
   logFileEdits: boolean
   logSessionLifecycle: boolean
   logTodos: boolean
+  staleSessionTimeoutMs: number
 }
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"])
@@ -24,6 +25,13 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (TRUE_VALUES.has(normalized)) return true
   if (FALSE_VALUES.has(normalized)) return false
   return fallback
+}
+
+function parseNumber(value: string | undefined, fallback: number): number {
+  if (!value) return fallback
+
+  const parsed = Number(value.trim())
+  return Number.isFinite(parsed) ? parsed : fallback
 }
 
 export function loadConfig(
@@ -43,5 +51,6 @@ export function loadConfig(
     logFileEdits: parseBoolean(env.OPENCODE_CMUX_LOG_FILE_EDITS, true),
     logSessionLifecycle: parseBoolean(env.OPENCODE_CMUX_LOG_SESSION_LIFECYCLE, true),
     logTodos: parseBoolean(env.OPENCODE_CMUX_LOG_TODOS, true),
+    staleSessionTimeoutMs: parseNumber(env.OPENCODE_CMUX_STALE_TIMEOUT, 0),
   }
 }
