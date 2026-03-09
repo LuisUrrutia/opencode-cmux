@@ -72,4 +72,41 @@ describe("loadConfig", () => {
 
     expect(config.staleSessionTimeoutMs).toBe(0)
   })
+
+  describe("transport", () => {
+    test("defaults to auto when not set", () => {
+      const config = loadConfig({})
+      expect(config.transport).toBe("auto")
+    })
+
+    test("parses 'socket'", () => {
+      const config = loadConfig({ OPENCODE_CMUX_TRANSPORT: "socket" })
+      expect(config.transport).toBe("socket")
+    })
+
+    test("parses 'cli'", () => {
+      const config = loadConfig({ OPENCODE_CMUX_TRANSPORT: "cli" })
+      expect(config.transport).toBe("cli")
+    })
+
+    test("parses 'auto'", () => {
+      const config = loadConfig({ OPENCODE_CMUX_TRANSPORT: "auto" })
+      expect(config.transport).toBe("auto")
+    })
+
+    test("trims and lowercases input", () => {
+      const config = loadConfig({ OPENCODE_CMUX_TRANSPORT: "  Socket  " })
+      expect(config.transport).toBe("socket")
+    })
+
+    test("defaults to auto on invalid value", () => {
+      const config = loadConfig({ OPENCODE_CMUX_TRANSPORT: "websocket" })
+      expect(config.transport).toBe("auto")
+    })
+
+    test("defaults to auto on empty string", () => {
+      const config = loadConfig({ OPENCODE_CMUX_TRANSPORT: "" })
+      expect(config.transport).toBe("auto")
+    })
+  })
 })

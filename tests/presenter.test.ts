@@ -13,6 +13,7 @@ import type {
 
 class FakeCmuxClient implements CmuxClient {
   public readonly available = true
+  public readonly transport = "cli" as const
   public readonly workspaceID = "workspace:1"
   public readonly calls: Array<
     | { type: "notify"; payload: NotificationPayload }
@@ -99,6 +100,13 @@ function createCoordinator(sessions: Record<string, SessionMetadata>) {
 
   return { coordinator, cmux, config }
 }
+
+describe("FakeCmuxClient", () => {
+  test("has transport property set to cli", () => {
+    const client = new FakeCmuxClient()
+    expect(client.transport).toBe("cli")
+  })
+})
 
 describe("CmuxStateCoordinator", () => {
   test("maps a primary busy -> idle lifecycle to sidebar output", async () => {

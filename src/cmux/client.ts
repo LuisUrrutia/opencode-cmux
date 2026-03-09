@@ -9,6 +9,7 @@ import {
   buildSetStatusCommand,
 } from "./commands.js"
 import type { CmuxEnvironment } from "./detect.js"
+import { SocketCmuxClient } from "./socket-client.js"
 
 interface CommandResult {
   exitCode: number
@@ -21,6 +22,7 @@ interface CreateCmuxClientOptions {
   binary: string
   environment: CmuxEnvironment
   logger: PluginLogger
+  transport: "cli" | "socket" | "auto"
 }
 
 function runCommand(binary: string, args: string[]): Promise<CommandResult> {
@@ -56,6 +58,7 @@ function runCommand(binary: string, args: string[]): Promise<CommandResult> {
 
 class CliCmuxClient implements CmuxClient {
   public readonly available: boolean
+  public readonly transport = "cli" as const
   public readonly workspaceID?: string
   private reportedMissingBinary = false
 
@@ -136,6 +139,44 @@ class CliCmuxClient implements CmuxClient {
   }
 }
 
+function shouldUseSocket(
+  transport: "cli" | "socket" | "auto",
+  env: CmuxEnvironment,
+  logger: PluginLogger,
+): boolean {
+  if (transport === "cli") return false
+
+  if (transport === "socket") {
+    if (!env.hasSocket) {
+      // User explicitly requested socket but it's not available — warn and fall back
+      void logger.log(
+        "warn",
+        "Socket transport requested but socket not found, falling back to CLI",
+        { socketPath: env.socketPath },
+      )
+      return false
+    }
+    return true
+  }
+
+  // "auto" — use socket if available, silent fallback to CLI
+  return env.hasSocket
+}
+
 export function createCmuxClient(options: CreateCmuxClientOptions): CmuxClient {
+  const useSocket = shouldUseSocket(
+    options.transport,
+    options.environment,
+    options.logger,
+  )
+
+  if (useSocket) {
+    return new SocketCmuxClient({
+      socketPath: options.environment.socketPath,
+      workspaceID: options.environment.workspaceID,
+      logger: options.logger,
+    })
+  }
+
   return new CliCmuxClient(options)
 }

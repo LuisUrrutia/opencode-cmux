@@ -1,6 +1,7 @@
 export interface PluginConfig {
   cmuxBin: string
   statusKey: string
+  transport: "cli" | "socket" | "auto"
   notifySubagents: boolean
   logSubagents: boolean
   progressEnabled: boolean
@@ -34,12 +35,24 @@ function parseNumber(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+function parseTransport(
+  value: string | undefined,
+  fallback: "cli" | "socket" | "auto",
+): "cli" | "socket" | "auto" {
+  if (!value) return fallback
+  const normalized = value.trim().toLowerCase()
+  if (normalized === "cli" || normalized === "socket" || normalized === "auto")
+    return normalized
+  return fallback
+}
+
 export function loadConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): PluginConfig {
   return {
     cmuxBin: env.OPENCODE_CMUX_BIN?.trim() || "cmux",
     statusKey: env.OPENCODE_CMUX_STATUS_KEY?.trim() || "opencode",
+    transport: parseTransport(env.OPENCODE_CMUX_TRANSPORT, "auto"),
     notifySubagents: parseBoolean(env.OPENCODE_CMUX_NOTIFY_SUBAGENTS, false),
     logSubagents: parseBoolean(env.OPENCODE_CMUX_LOG_SUBAGENTS, true),
     progressEnabled: parseBoolean(env.OPENCODE_CMUX_PROGRESS, true),

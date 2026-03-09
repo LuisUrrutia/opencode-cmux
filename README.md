@@ -5,6 +5,7 @@
 ## Features
 
 - Detects whether OpenCode is running inside a cmux-managed workspace and safely no-ops outside cmux.
+- **Optional Unix socket transport** (`/tmp/cmux.sock`) eliminates per-call process spawning (~1-2ms vs ~20-50ms). Falls back to CLI automatically.
 - Tracks the active project and primary agent session in the cmux sidebar.
 - Distinguishes subagent lifecycle events from primary-session completion to reduce notification spam.
 - Uses sidebar status pills, logs, and progress bars for working, waiting, question, done, and error states.
@@ -79,6 +80,7 @@ The first version uses environment variables so it works with either local plugi
 | --- | --- | --- |
 | `OPENCODE_CMUX_BIN` | `cmux` | Override the `cmux` executable path. |
 | `OPENCODE_CMUX_STATUS_KEY` | `opencode` | Sidebar status key namespace. |
+| `OPENCODE_CMUX_TRANSPORT` | `auto` | Transport mode: `auto` (socket if available, CLI fallback), `socket`, or `cli`. |
 | `OPENCODE_CMUX_NOTIFY_SUBAGENTS` | `false` | Notify on subagent completion and errors. |
 | `OPENCODE_CMUX_LOG_SUBAGENTS` | `true` | Log subagent lifecycle events to the sidebar. |
 | `OPENCODE_CMUX_PROGRESS` | `true` | Show activity-based progress updates. |
@@ -103,5 +105,4 @@ bun run build
 
 ## Roadmap
 
-- Add an optional socket-backed cmux transport.
 - Expand beyond the current workspace when there is a clear multi-workspace coordination model.

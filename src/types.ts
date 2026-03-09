@@ -115,6 +115,7 @@ export interface SidebarLogPayload {
 
 export interface CmuxClient {
   readonly available: boolean
+  readonly transport: "cli" | "socket"
   readonly workspaceID?: string
   notify(payload: NotificationPayload): Promise<void>
   setStatus(key: string, payload: SidebarStatusPayload): Promise<void>

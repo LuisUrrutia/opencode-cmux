@@ -36,6 +36,7 @@ const plugin: Plugin = async (ctx) => {
     binary: config.cmuxBin,
     environment,
     logger,
+    transport: config.transport,
   })
   const sessionResolver = new OpencodeSessionResolver(ctx.client, logger)
   const project = resolveProjectContext(ctx)
@@ -51,6 +52,8 @@ const plugin: Plugin = async (ctx) => {
     project: project.label,
     workspaceID: environment.workspaceID,
     socketPath: environment.socketPath,
+    transport: cmux.transport,
+    hasSocket: environment.hasSocket,
   })
 
   /** Best-effort error logging — never throws. */
