@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@attamusc/opencode-cmux",
+  "version": "0.1.0",
+  "description": "OpenCode plugin that surfaces project and agent activity in cmux",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && bun build ./src/index.ts --outdir dist --target bun --format esm",
+    "test": "bun test",
+    "check": "bun test && bun run build"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "cmux",
+    "ghostty"
+  ],
+  "author": "Attamusc",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Attamusc/opencode-cmux.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Attamusc/opencode-cmux/issues"
+  },
+  "homepage": "https://github.com/Attamusc/opencode-cmux#readme",
+  "engines": {
+    "bun": ">=1.3.4"
+  }
+}

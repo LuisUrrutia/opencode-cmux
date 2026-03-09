@@ -1,0 +1,707 @@
+import { describe, expect, test } from "bun:test"
+import { CmuxStateCoordinator } from "../src/state/presenter.ts"
+import type {
+  CmuxClient,
+  NotificationPayload,
+  PluginLogger,
+  ProgressPayload,
+  SessionMetadata,
+  SessionResolver,
+  SidebarLogPayload,
+  SidebarStatusPayload,
+} from "../src/types.ts"
+
+class FakeCmuxClient implements CmuxClient {
+  public readonly available = true
+  public readonly workspaceID = "workspace:1"
+  public readonly calls: Array<
+    | { type: "notify"; payload: NotificationPayload }
+    | { type: "setStatus"; key: string; payload: SidebarStatusPayload }
+    | { type: "clearStatus"; key: string }
+    | { type: "setProgress"; payload: ProgressPayload }
+    | { type: "clearProgress" }
+    | { type: "log"; payload: SidebarLogPayload }
+  > = []
+
+  public async notify(payload: NotificationPayload): Promise<void> {
+    this.calls.push({ type: "notify", payload })
+  }
+
+  public async setStatus(
+    key: string,
+    payload: SidebarStatusPayload,
+  ): Promise<void> {
+    this.calls.push({ type: "setStatus", key, payload })
+  }
+
+  public async clearStatus(key: string): Promise<void> {
+    this.calls.push({ type: "clearStatus", key })
+  }
+
+  public async setProgress(payload: ProgressPayload): Promise<void> {
+    this.calls.push({ type: "setProgress", payload })
+  }
+
+  public async clearProgress(): Promise<void> {
+    this.calls.push({ type: "clearProgress" })
+  }
+
+  public async log(payload: SidebarLogPayload): Promise<void> {
+    this.calls.push({ type: "log", payload })
+  }
+
+  public reset(): void {
+    this.calls.length = 0
+  }
+}
+
+class FakeSessionResolver implements SessionResolver {
+  public constructor(private readonly sessions: Record<string, SessionMetadata>) {}
+
+  public async getSessionMetadata(sessionID: string): Promise<SessionMetadata | null> {
+    return this.sessions[sessionID] ?? null
+  }
+}
+
+const noopLogger: PluginLogger = {
+  async log() {},
+}
+
+function createCoordinator(sessions: Record<string, SessionMetadata>) {
+  const cmux = new FakeCmuxClient()
+  const config = {
+    cmuxBin: "cmux",
+    statusKey: "opencode",
+    notifySubagents: false,
+    logSubagents: true,
+    progressEnabled: true,
+    keepDoneStatus: true,
+    notifyQuestions: true,
+    notifyPermissions: true,
+    logToolCalls: true,
+    logToolCallsVerbose: false,
+    logFileEdits: true,
+    logSessionLifecycle: true,
+    logTodos: true,
+  }
+  const coordinator = new CmuxStateCoordinator({
+    cmux,
+    config,
+    logger: noopLogger,
+    project: {
+      id: "demo",
+      label: "demo",
+      root: "/tmp/demo",
+    },
+    sessionResolver: new FakeSessionResolver(sessions),
+  })
+
+  return { coordinator, cmux, config }
+}
+
+describe("CmuxStateCoordinator", () => {
+  test("maps a primary busy -> idle lifecycle to sidebar output", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "working",
+        icon: "terminal",
+        color: "#f59e0b",
+      },
+    })
+    expect(cmux.calls).toContainEqual({
+      type: "setProgress",
+      payload: {
+        value: 0.1,
+        label: "demo: Implement feature",
+      },
+    })
+
+    cmux.reset()
+    await coordinator.handleSessionStatus("primary", "idle")
+
+    expect(cmux.calls).toContainEqual({
+      type: "notify",
+      payload: {
+        title: "Done: demo",
+        body: "Implement feature",
+      },
+    })
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "done",
+        icon: "check-circle",
+        color: "#22c55e",
+      },
+    })
+    expect(cmux.calls).toContainEqual({
+      type: "setProgress",
+      payload: {
+        value: 1,
+        label: "demo: done",
+      },
+    })
+  })
+
+  test("overlays question state and restores working status with subagent count", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+      subagent: {
+        id: "subagent",
+        title: "Write docs",
+        parentID: "primary",
+        kind: "subagent",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleSessionStatus("subagent", "busy")
+
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "working · 1 subagent",
+        icon: "terminal",
+        color: "#f59e0b",
+      },
+    })
+
+    cmux.reset()
+    await coordinator.handleQuestionAsked("Approve release note?", "primary")
+
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "question",
+        icon: "help-circle",
+        color: "#a855f7",
+      },
+    })
+    expect(cmux.calls).toContainEqual({
+      type: "notify",
+      payload: {
+        title: "Question: demo",
+        subtitle: "Approve release note?",
+      },
+    })
+
+    cmux.reset()
+    await coordinator.handleQuestionResolved()
+
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "working · 1 subagent",
+        icon: "terminal",
+        color: "#f59e0b",
+      },
+    })
+  })
+
+  test("tool started during busy session updates status text", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    cmux.reset()
+
+    await coordinator.handleToolStarted("bash", { command: "npm test" })
+
+    // Status should now show "working: bash"
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "working: bash",
+        icon: "terminal",
+        color: "#f59e0b",
+      },
+    })
+
+    // Should log the tool start
+    expect(cmux.calls).toContainEqual({
+      type: "log",
+      payload: {
+        level: "progress",
+        source: "opencode",
+        message: "demo: running bash: npm test",
+      },
+    })
+  })
+
+  test("tool completed reverts status text to 'working'", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleToolStarted("bash", { command: "npm test" })
+    cmux.reset()
+
+    await coordinator.handleToolCompleted("bash", { command: "npm test" })
+
+    // Status should revert to just "working" (no tool suffix)
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "working",
+        icon: "terminal",
+        color: "#f59e0b",
+      },
+    })
+
+    // Should log the tool completion
+    expect(cmux.calls).toContainEqual({
+      type: "log",
+      payload: {
+        level: "info",
+        source: "opencode",
+        message: "demo: finished bash: npm test",
+      },
+    })
+  })
+
+  test("multiple concurrent tools show count in status", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleToolStarted("bash", { command: "npm test" })
+    await coordinator.handleToolStarted("read", { filePath: "src/index.ts" })
+    cmux.reset()
+
+    // Trigger a re-render by starting a third tool
+    await coordinator.handleToolStarted("glob", { pattern: "**/*.ts" })
+
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "working: 3 tools",
+        icon: "terminal",
+        color: "#f59e0b",
+      },
+    })
+  })
+
+  test("tool tracking is isolated per invocation (no leaks)", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+
+    // Start and complete a bash tool
+    await coordinator.handleToolStarted("bash", { command: "npm test" })
+    await coordinator.handleToolCompleted("bash", { command: "npm test" })
+
+    // Start a different bash tool
+    await coordinator.handleToolStarted("bash", { command: "npm build" })
+    cmux.reset()
+
+    // Complete it — should only remove one entry
+    await coordinator.handleToolCompleted("bash", { command: "npm build" })
+
+    // Should show no tools, just "working"
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "working",
+        icon: "terminal",
+        color: "#f59e0b",
+      },
+    })
+  })
+
+  test("tool started when session not busy still logs and tracks", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    // Don't set session to busy first — tool hook fires anyway
+    await coordinator.handleToolStarted("edit", {
+      filePath: "/tmp/demo/src/index.ts",
+    })
+
+    // Should still log the tool start
+    expect(cmux.calls).toContainEqual({
+      type: "log",
+      payload: {
+        level: "progress",
+        source: "opencode",
+        message: "demo: running edit: src/index.ts",
+      },
+    })
+
+    // No status update since session isn't busy (snapshot returns {})
+    const statusCalls = cmux.calls.filter((c) => c.type === "setStatus")
+    expect(statusCalls).toHaveLength(0)
+  })
+
+  test("tool with subagent shows combined status", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+      subagent: {
+        id: "subagent",
+        title: "Write docs",
+        parentID: "primary",
+        kind: "subagent",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleSessionStatus("subagent", "busy")
+    cmux.reset()
+
+    await coordinator.handleToolStarted("bash", { command: "npm test" })
+
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "working: bash · 1 subagent",
+        icon: "terminal",
+        color: "#f59e0b",
+      },
+    })
+  })
+
+  test("file edit logged to sidebar with relative path", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleFileEdited("/tmp/demo/src/components/Button.tsx")
+
+    expect(cmux.calls).toContainEqual({
+      type: "log",
+      payload: {
+        level: "progress",
+        source: "opencode",
+        message: "demo: edited src/components/Button.tsx",
+      },
+    })
+  })
+
+  test("consecutive edits to same file are deduplicated", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleFileEdited("/tmp/demo/src/index.ts")
+    const firstCallCount = cmux.calls.filter(
+      (c) =>
+        c.type === "log" &&
+        c.payload.message.includes("edited src/index.ts"),
+    ).length
+    expect(firstCallCount).toBe(1)
+
+    // Second edit to same file within debounce window should be suppressed
+    await coordinator.handleFileEdited("/tmp/demo/src/index.ts")
+    const secondCallCount = cmux.calls.filter(
+      (c) =>
+        c.type === "log" &&
+        c.payload.message.includes("edited src/index.ts"),
+    ).length
+    expect(secondCallCount).toBe(1) // Still just 1 — debounced
+
+    // Different file should still be logged
+    await coordinator.handleFileEdited("/tmp/demo/src/other.ts")
+    expect(cmux.calls).toContainEqual({
+      type: "log",
+      payload: {
+        level: "progress",
+        source: "opencode",
+        message: "demo: edited src/other.ts",
+      },
+    })
+  })
+
+  test("file edit config toggle suppresses logging", async () => {
+    const { coordinator, cmux, config } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    // Disable file edit logging
+    config.logFileEdits = false
+
+    await coordinator.handleFileEdited("/tmp/demo/src/index.ts")
+
+    const logCalls = cmux.calls.filter(
+      (c) => c.type === "log" && c.payload.message.includes("edited"),
+    )
+    expect(logCalls).toHaveLength(0)
+  })
+
+  test("session created eagerly resolves metadata and logs", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionCreated("primary")
+
+    expect(cmux.calls).toContainEqual({
+      type: "log",
+      payload: {
+        level: "info",
+        source: "opencode",
+        message: "demo: session started - Implement feature",
+      },
+    })
+  })
+
+  test("session created logs sessionID when metadata not found", async () => {
+    const { coordinator, cmux } = createCoordinator({})
+
+    await coordinator.handleSessionCreated("unknown-session")
+
+    expect(cmux.calls).toContainEqual({
+      type: "log",
+      payload: {
+        level: "info",
+        source: "opencode",
+        message: "demo: session started - unknown-session",
+      },
+    })
+  })
+
+  test("session created respects logSessionLifecycle config", async () => {
+    const { coordinator, cmux, config } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    config.logSessionLifecycle = false
+    await coordinator.handleSessionCreated("primary")
+
+    const logCalls = cmux.calls.filter(
+      (c) => c.type === "log" && c.payload.message.includes("session started"),
+    )
+    expect(logCalls).toHaveLength(0)
+  })
+
+  test("session deleted cleans up state and logs", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    // First make the session busy so it's tracked
+    await coordinator.handleSessionStatus("primary", "busy")
+    cmux.reset()
+
+    await coordinator.handleSessionDeleted("primary")
+
+    expect(cmux.calls).toContainEqual({
+      type: "log",
+      payload: {
+        level: "info",
+        source: "opencode",
+        message: "demo: session deleted - Build plugin",
+      },
+    })
+
+    // After deleting primary, status should be cleared (snapshot returns {})
+    expect(cmux.calls).toContainEqual({
+      type: "clearStatus",
+      key: "opencode",
+    })
+  })
+
+  test("session deleted clears primary state and progress", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    cmux.reset()
+
+    await coordinator.handleSessionDeleted("primary")
+
+    // Should clear progress since primary is gone
+    expect(cmux.calls).toContainEqual({
+      type: "clearProgress",
+    })
+  })
+
+  test("session compacted logs informational message", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionCompacted("primary")
+
+    expect(cmux.calls).toContainEqual({
+      type: "log",
+      payload: {
+        level: "info",
+        source: "opencode",
+        message: "demo: session compacted - Build plugin",
+      },
+    })
+  })
+
+  test("session compacted respects logSessionLifecycle config", async () => {
+    const { coordinator, cmux, config } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    config.logSessionLifecycle = false
+    await coordinator.handleSessionCompacted("primary")
+
+    const logCalls = cmux.calls.filter(
+      (c) => c.type === "log" && c.payload.message.includes("compacted"),
+    )
+    expect(logCalls).toHaveLength(0)
+  })
+
+  test("todo updated tracks state and logs summary", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleTodoUpdated([
+      { text: "Write tests", completed: true },
+      { text: "Fix bug", completed: false },
+      { text: "Deploy", completed: true },
+      { text: "Review", completed: false },
+      { text: "Document", completed: false },
+    ])
+
+    expect(cmux.calls).toContainEqual({
+      type: "log",
+      payload: {
+        level: "progress",
+        source: "opencode",
+        message: "demo: todos: 2/5 complete",
+      },
+    })
+  })
+
+  test("todo updated with empty list logs 0/0", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleTodoUpdated([])
+
+    expect(cmux.calls).toContainEqual({
+      type: "log",
+      payload: {
+        level: "progress",
+        source: "opencode",
+        message: "demo: todos: 0/0 complete",
+      },
+    })
+  })
+
+  test("todo updated respects logTodos config", async () => {
+    const { coordinator, cmux, config } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    config.logTodos = false
+    await coordinator.handleTodoUpdated([
+      { text: "Write tests", completed: true },
+    ])
+
+    const logCalls = cmux.calls.filter(
+      (c) => c.type === "log" && c.payload.message.includes("todos"),
+    )
+    expect(logCalls).toHaveLength(0)
+  })
+})
