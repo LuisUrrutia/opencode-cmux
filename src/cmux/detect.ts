@@ -1,10 +1,7 @@
-import { existsSync } from "node:fs"
-
 export interface CmuxEnvironment {
   workspaceID?: string
   surfaceID?: string
   socketPath: string
-  hasSocket: boolean
   isManagedWorkspace: boolean
   termProgram?: string
 }
@@ -25,7 +22,6 @@ export function detectCmuxEnvironment(
     workspaceID,
     surfaceID,
     socketPath,
-    hasSocket: existsSync(socketPath),
     isManagedWorkspace: workspaceID !== undefined,
     termProgram: normalize(env.TERM_PROGRAM),
   }

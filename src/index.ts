@@ -24,6 +24,14 @@ const plugin: Plugin = async (ctx) => {
   const config = loadConfig()
   const logger = createPluginLogger(ctx.client)
   const environment = detectCmuxEnvironment(process.env)
+
+  if (!environment.isManagedWorkspace) {
+    await logger.log("debug", "cmux not detected, plugin disabled", {
+      socketPath: environment.socketPath,
+    })
+    return {}
+  }
+
   const cmux = createCmuxClient({
     binary: config.cmuxBin,
     environment,
@@ -42,7 +50,6 @@ const plugin: Plugin = async (ctx) => {
   await logger.log("info", "Initialized opencode-cmux plugin", {
     project: project.label,
     workspaceID: environment.workspaceID,
-    managedWorkspace: environment.isManagedWorkspace,
     socketPath: environment.socketPath,
   })
 
