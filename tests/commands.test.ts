@@ -47,6 +47,27 @@ describe("CLI command builders", () => {
     ])
   })
 
+  test("buildNotifyCommand with workspace", () => {
+    const result = buildNotifyCommand(
+      { title: "Build done", body: "All tests passed" },
+      "ws-123",
+    )
+    expect(result).toEqual([
+      "notify",
+      "--title",
+      "Build done",
+      "--body",
+      "All tests passed",
+      "--workspace",
+      "ws-123",
+    ])
+  })
+
+  test("buildNotifyCommand without workspace omits --workspace", () => {
+    const result = buildNotifyCommand({ title: "Build done" })
+    expect(result).not.toContain("--workspace")
+  })
+
   test("buildSetStatusCommand with workspace", () => {
     const result = buildSetStatusCommand(
       "build",
@@ -349,6 +370,29 @@ describe("Socket JSON-RPC builders", () => {
     test("is newline-terminated", () => {
       const result = buildSocketNotify({ title: "Test" }, "req-7")
       expect(result.endsWith("\n")).toBe(true)
+    })
+
+    test("includes workspace_id when provided", () => {
+      const result = buildSocketNotify(
+        { title: "Build Done", body: "All tests passed" },
+        "req-8",
+        "C741C8F0-DD75-4BF2-83BF-2CC032234753",
+      )
+      const parsed = JSON.parse(result.trim())
+      expect(parsed.params.workspace_id).toBe(
+        "C741C8F0-DD75-4BF2-83BF-2CC032234753",
+      )
+      expect(parsed.params.title).toBe("Build Done")
+      expect(parsed.params.body).toBe("All tests passed")
+    })
+
+    test("omits workspace_id when undefined", () => {
+      const result = buildSocketNotify(
+        { title: "Build Done" },
+        "req-9",
+      )
+      const parsed = JSON.parse(result.trim())
+      expect("workspace_id" in parsed.params).toBe(false)
     })
   })
 })

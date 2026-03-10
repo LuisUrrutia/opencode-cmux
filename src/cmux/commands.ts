@@ -13,11 +13,14 @@ function withWorkspace(args: string[], workspaceID?: string): string[] {
   return workspaceID ? [...args, "--workspace", workspaceID] : args
 }
 
-export function buildNotifyCommand(payload: NotificationPayload): string[] {
+export function buildNotifyCommand(
+  payload: NotificationPayload,
+  workspaceID?: string,
+): string[] {
   const args = ["notify", "--title", payload.title]
   if (payload.subtitle) args.push("--subtitle", payload.subtitle)
   if (payload.body) args.push("--body", payload.body)
-  return args
+  return withWorkspace(args, workspaceID)
 }
 
 export function buildSetStatusCommand(
@@ -154,6 +157,7 @@ export function buildJsonRpc(
 export function buildSocketNotify(
   payload: NotificationPayload,
   requestID: string,
+  workspaceID?: string,
 ): string {
   return buildJsonRpc(
     "notification.create",
@@ -161,6 +165,7 @@ export function buildSocketNotify(
       title: payload.title,
       subtitle: payload.subtitle,
       body: payload.body,
+      workspace_id: workspaceID,
     },
     requestID,
   )

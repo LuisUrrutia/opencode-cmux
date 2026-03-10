@@ -211,6 +211,46 @@ describe("SocketCmuxClient", () => {
       expect(logger.calls).toHaveLength(0) // No warnings
     })
 
+    test("includes workspace_id in JSON-RPC params when client has workspaceID", async () => {
+      let receivedData = ""
+      const ts = await createTestServer((data) => {
+        receivedData = data
+        return JSON.stringify({ id: "req-1", ok: true, result: {} })
+      })
+
+      const logger = createTestLogger()
+      const client = new SocketCmuxClient({
+        socketPath: ts.socketPath,
+        workspaceID,
+        logger,
+      })
+
+      await client.notify({ title: "Test", body: "workspace check" })
+
+      const parsed = JSON.parse(receivedData.trim())
+      expect(parsed.params.workspace_id).toBe(workspaceID)
+      expect(parsed.params.title).toBe("Test")
+    })
+
+    test("omits workspace_id when client has no workspaceID", async () => {
+      let receivedData = ""
+      const ts = await createTestServer((data) => {
+        receivedData = data
+        return JSON.stringify({ id: "req-1", ok: true, result: {} })
+      })
+
+      const logger = createTestLogger()
+      const client = new SocketCmuxClient({
+        socketPath: ts.socketPath,
+        logger,
+      })
+
+      await client.notify({ title: "Test" })
+
+      const parsed = JSON.parse(receivedData.trim())
+      expect("workspace_id" in parsed.params).toBe(false)
+    })
+
     test("logs warning on ok:false response", async () => {
       const ts = await createTestServer(() => {
         return JSON.stringify({ id: "req-1", ok: false, error: "rate limited" })

@@ -68,7 +68,7 @@ class CliCmuxClient implements CmuxClient {
   }
 
   public async notify(payload: Parameters<CmuxClient["notify"]>[0]): Promise<void> {
-    await this.execute("notify", buildNotifyCommand(payload))
+    await this.execute("notify", buildNotifyCommand(payload, this.workspaceID))
   }
 
   public async setStatus(

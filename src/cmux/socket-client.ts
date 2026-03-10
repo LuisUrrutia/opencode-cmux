@@ -153,7 +153,7 @@ export class SocketCmuxClient implements CmuxClient {
 
   public async notify(payload: NotificationPayload): Promise<void> {
     const requestID = this.nextRequestID()
-    const message = buildSocketNotify(payload, requestID)
+    const message = buildSocketNotify(payload, requestID, this.workspaceID)
     await this.sendJsonRpc(message, "notify")
   }
 
