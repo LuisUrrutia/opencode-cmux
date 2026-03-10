@@ -102,7 +102,3 @@ Boolean variables accept `1`, `true`, `yes`, or `on` for true and `0`, `false`, 
 bun test
 bun run build
 ```
-
-## Roadmap
-
-- Expand beyond the current workspace when there is a clear multi-workspace coordination model.

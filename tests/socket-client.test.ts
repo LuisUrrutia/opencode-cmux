@@ -325,7 +325,7 @@ describe("SocketCmuxClient", () => {
       })
 
       expect(receivedData).toBe(
-        `log --level=error --source=build --tab=${workspaceID} -- Compilation failed\n`,
+        `log --level=error --source=build --tab=${workspaceID} -- "Compilation failed"\n`,
       )
     })
   })

@@ -76,6 +76,13 @@ export function buildLogCommand(
 // Socket command builders (text format — sidebar metadata commands)
 // ---------------------------------------------------------------------------
 
+/** Quote a value for the socket text protocol if it contains spaces. */
+function quote(value: string): string {
+  if (!value.includes(" ")) return value
+  // Escape any embedded double quotes, then wrap in double quotes
+  return `"${value.replace(/"/g, '\\"')}"`
+}
+
 function withTab(command: string, workspaceID?: string): string {
   const base = workspaceID ? `${command} --tab=${workspaceID}` : command
   return `${base}\n`
@@ -86,7 +93,7 @@ export function buildSocketSetStatus(
   payload: SidebarStatusPayload,
   workspaceID?: string,
 ): string {
-  const command = `set_status ${key} ${payload.text} --icon=${payload.icon} --color=${payload.color}`
+  const command = `set_status ${key} ${quote(payload.text)} --icon=${payload.icon} --color=${payload.color}`
   return withTab(command, workspaceID)
 }
 
@@ -101,7 +108,7 @@ export function buildSocketSetProgress(
   payload: ProgressPayload,
   workspaceID?: string,
 ): string {
-  const command = `set_progress ${payload.value.toFixed(2)} --label=${payload.label}`
+  const command = `set_progress ${payload.value.toFixed(2)} --label=${quote(payload.label)}`
   return withTab(command, workspaceID)
 }
 
@@ -115,7 +122,7 @@ export function buildSocketLog(
 ): string {
   let command = `log --level=${payload.level} --source=${payload.source}`
   if (workspaceID) command += ` --tab=${workspaceID}`
-  command += ` -- ${payload.message}`
+  command += ` -- ${quote(payload.message)}`
   return `${command}\n`
 }
 

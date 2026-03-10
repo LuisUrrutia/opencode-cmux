@@ -1,18 +1,47 @@
 export interface PluginConfig {
+  /** Path to the cmux binary. Env: `OPENCODE_CMUX_BIN`. Default: `"cmux"` */
   cmuxBin: string
+
+  /** Sidebar status key for set_status/clear_status calls. Env: `OPENCODE_CMUX_STATUS_KEY`. Default: `"opencode"` */
   statusKey: string
+
+  /** Transport selection: `"cli"` (spawn), `"socket"` (Unix socket), or `"auto"` (prefer socket). Env: `OPENCODE_CMUX_TRANSPORT`. Default: `"auto"` */
   transport: "cli" | "socket" | "auto"
+
+  /** Send desktop notifications for subagent session events. Env: `OPENCODE_CMUX_NOTIFY_SUBAGENTS`. Default: `false` */
   notifySubagents: boolean
+
+  /** Log subagent activity to the sidebar. Env: `OPENCODE_CMUX_LOG_SUBAGENTS`. Default: `true` */
   logSubagents: boolean
+
+  /** Show a progress bar while the session is busy. Env: `OPENCODE_CMUX_PROGRESS`. Default: `true` */
   progressEnabled: boolean
+
+  /** Keep the "done" status pill visible after the session goes idle. Env: `OPENCODE_CMUX_KEEP_DONE_STATUS`. Default: `true` */
   keepDoneStatus: boolean
+
+  /** Send a desktop notification when the agent asks a question. Env: `OPENCODE_CMUX_NOTIFY_QUESTIONS`. Default: `true` */
   notifyQuestions: boolean
+
+  /** Send a desktop notification when the agent requests permission. Env: `OPENCODE_CMUX_NOTIFY_PERMISSIONS`. Default: `true` */
   notifyPermissions: boolean
+
+  /** Log tool start/complete events to the sidebar. Env: `OPENCODE_CMUX_LOG_TOOLS`. Default: `true` */
   logToolCalls: boolean
+
+  /** Include tool arguments in sidebar log messages. Env: `OPENCODE_CMUX_LOG_TOOLS_VERBOSE`. Default: `false` */
   logToolCallsVerbose: boolean
+
+  /** Log file edit events to the sidebar. Env: `OPENCODE_CMUX_LOG_FILE_EDITS`. Default: `true` */
   logFileEdits: boolean
+
+  /** Log session created/deleted/compacted events to the sidebar. Env: `OPENCODE_CMUX_LOG_SESSION_LIFECYCLE`. Default: `true` */
   logSessionLifecycle: boolean
+
+  /** Log todo progress changes to the sidebar. Env: `OPENCODE_CMUX_LOG_TODOS`. Default: `true` */
   logTodos: boolean
+
+  /** Auto-clear a stuck "working" state after this many ms. 0 = disabled. Env: `OPENCODE_CMUX_STALE_TIMEOUT`. Default: `0` */
   staleSessionTimeoutMs: number
 }
 

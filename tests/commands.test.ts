@@ -203,7 +203,7 @@ describe("Socket text-format builders", () => {
         value: 0.75,
         label: "Almost done",
       })
-      expect(result).toBe("set_progress 0.75 --label=Almost done\n")
+      expect(result).toBe('set_progress 0.75 --label="Almost done"\n')
     })
   })
 
@@ -226,7 +226,7 @@ describe("Socket text-format builders", () => {
         workspaceID,
       )
       expect(result).toBe(
-        `log --level=error --source=build --tab=${workspaceID} -- Compilation failed\n`,
+        `log --level=error --source=build --tab=${workspaceID} -- "Compilation failed"\n`,
       )
     })
 
@@ -240,7 +240,7 @@ describe("Socket text-format builders", () => {
         workspaceID,
       )
       expect(result).toContain(
-        '-- File "main.ts" has 3 errors & 2 warnings',
+        '-- "File \\"main.ts\\" has 3 errors & 2 warnings"',
       )
     })
 

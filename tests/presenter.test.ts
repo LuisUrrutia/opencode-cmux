@@ -1,105 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { CmuxStateCoordinator } from "../src/state/presenter.ts"
-import type {
-  CmuxClient,
-  NotificationPayload,
-  PluginLogger,
-  ProgressPayload,
-  SessionMetadata,
-  SessionResolver,
-  SidebarLogPayload,
-  SidebarStatusPayload,
-} from "../src/types.ts"
-
-class FakeCmuxClient implements CmuxClient {
-  public readonly available = true
-  public readonly transport = "cli" as const
-  public readonly workspaceID = "workspace:1"
-  public readonly calls: Array<
-    | { type: "notify"; payload: NotificationPayload }
-    | { type: "setStatus"; key: string; payload: SidebarStatusPayload }
-    | { type: "clearStatus"; key: string }
-    | { type: "setProgress"; payload: ProgressPayload }
-    | { type: "clearProgress" }
-    | { type: "log"; payload: SidebarLogPayload }
-  > = []
-
-  public async notify(payload: NotificationPayload): Promise<void> {
-    this.calls.push({ type: "notify", payload })
-  }
-
-  public async setStatus(
-    key: string,
-    payload: SidebarStatusPayload,
-  ): Promise<void> {
-    this.calls.push({ type: "setStatus", key, payload })
-  }
-
-  public async clearStatus(key: string): Promise<void> {
-    this.calls.push({ type: "clearStatus", key })
-  }
-
-  public async setProgress(payload: ProgressPayload): Promise<void> {
-    this.calls.push({ type: "setProgress", payload })
-  }
-
-  public async clearProgress(): Promise<void> {
-    this.calls.push({ type: "clearProgress" })
-  }
-
-  public async log(payload: SidebarLogPayload): Promise<void> {
-    this.calls.push({ type: "log", payload })
-  }
-
-  public reset(): void {
-    this.calls.length = 0
-  }
-}
-
-class FakeSessionResolver implements SessionResolver {
-  public constructor(private readonly sessions: Record<string, SessionMetadata>) {}
-
-  public async getSessionMetadata(sessionID: string): Promise<SessionMetadata | null> {
-    return this.sessions[sessionID] ?? null
-  }
-}
-
-const noopLogger: PluginLogger = {
-  async log() {},
-}
-
-function createCoordinator(sessions: Record<string, SessionMetadata>) {
-  const cmux = new FakeCmuxClient()
-  const config = {
-    cmuxBin: "cmux",
-    statusKey: "opencode",
-    notifySubagents: false,
-    logSubagents: true,
-    progressEnabled: true,
-    keepDoneStatus: true,
-    notifyQuestions: true,
-    notifyPermissions: true,
-    logToolCalls: true,
-    logToolCallsVerbose: false,
-    logFileEdits: true,
-    logSessionLifecycle: true,
-    logTodos: true,
-    staleSessionTimeoutMs: 0,
-  }
-  const coordinator = new CmuxStateCoordinator({
-    cmux,
-    config,
-    logger: noopLogger,
-    project: {
-      id: "demo",
-      label: "demo",
-      root: "/tmp/demo",
-    },
-    sessionResolver: new FakeSessionResolver(sessions),
-  })
-
-  return { coordinator, cmux, config }
-}
+import { FakeCmuxClient, createCoordinator } from "./helpers/index.ts"
 
 describe("FakeCmuxClient", () => {
   test("has transport property set to cli", () => {
@@ -946,5 +846,272 @@ describe("CmuxStateCoordinator", () => {
         c.payload.message.includes("stale session cleared"),
     )
     expect(staleLogs.length).toBe(0)
+  })
+
+  // ---------------------------------------------------------------------------
+  // handleSessionError
+  // ---------------------------------------------------------------------------
+
+  test("handleSessionError sets error status and sends notification for primary session", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    cmux.reset()
+
+    await coordinator.handleSessionError("primary")
+    await coordinator.flush()
+
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "error",
+        icon: "alert-circle",
+        color: "#ef4444",
+      },
+    })
+
+    expect(cmux.calls).toContainEqual({
+      type: "notify",
+      payload: {
+        title: "Error: demo",
+        body: "Implement feature",
+      },
+    })
+
+    expect(cmux.calls).toContainEqual({
+      type: "log",
+      payload: {
+        level: "error",
+        source: "opencode",
+        message: "demo: error in Implement feature",
+      },
+    })
+  })
+
+  test("handleSessionError clears pending permission and question", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handlePermissionAsked("Run bash?")
+    cmux.reset()
+
+    // Error should clear the pending permission
+    await coordinator.handleSessionError("primary")
+    await coordinator.flush()
+
+    // Status should be "error", not "waiting" (permission should be cleared)
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "error",
+        icon: "alert-circle",
+        color: "#ef4444",
+      },
+    })
+  })
+
+  test("handleSessionError does nothing for unknown session", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build",
+        kind: "primary",
+      },
+    })
+
+    cmux.reset()
+    await coordinator.handleSessionError("nonexistent")
+    await coordinator.flush()
+
+    // No calls should be made for an unknown session
+    expect(cmux.calls.length).toBe(0)
+  })
+
+  // ---------------------------------------------------------------------------
+  // handleSessionIdle (dedicated event, vs. handleSessionStatus("idle"))
+  // ---------------------------------------------------------------------------
+
+  test("handleSessionIdle transitions primary to done status", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    cmux.reset()
+
+    await coordinator.handleSessionIdle("primary")
+    await coordinator.flush()
+
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "done",
+        icon: "check-circle",
+        color: "#22c55e",
+      },
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // handlePermissionAsked / handlePermissionResolved
+  // ---------------------------------------------------------------------------
+
+  test("handlePermissionAsked sets waiting status with lock icon", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    cmux.reset()
+
+    await coordinator.handlePermissionAsked("Execute bash command")
+    await coordinator.flush()
+
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "waiting",
+        icon: "lock",
+        color: "#ef4444",
+      },
+    })
+
+    // Should send a notification
+    expect(cmux.calls).toContainEqual({
+      type: "notify",
+      payload: {
+        title: "Permission needed: demo",
+        subtitle: "Execute bash command",
+      },
+    })
+
+    // Should log
+    expect(cmux.calls).toContainEqual({
+      type: "log",
+      payload: {
+        level: "warning",
+        source: "opencode",
+        message: "demo: waiting for permission - Execute bash command",
+      },
+    })
+  })
+
+  test("handlePermissionAsked deduplicates identical requests", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handlePermissionAsked("Run bash?")
+    await coordinator.flush()
+    cmux.reset()
+
+    // Ask same permission again — should be a no-op
+    await coordinator.handlePermissionAsked("Run bash?")
+    await coordinator.flush()
+
+    const notifications = cmux.calls.filter((c) => c.type === "notify")
+    expect(notifications.length).toBe(0)
+  })
+
+  test("handlePermissionResolved clears waiting status back to working", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handlePermissionAsked("Execute bash command")
+    await coordinator.flush()
+    cmux.reset()
+
+    await coordinator.handlePermissionResolved()
+    await coordinator.flush()
+
+    // Should revert to working status since primary is still busy
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: expect.objectContaining({
+        text: expect.stringContaining("working"),
+        icon: "terminal",
+        color: "#f59e0b",
+      }),
+    })
+  })
+
+  test("handlePermissionResolved is no-op when no permission is pending", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build",
+        kind: "primary",
+      },
+    })
+
+    cmux.reset()
+    await coordinator.handlePermissionResolved()
+    await coordinator.flush()
+
+    expect(cmux.calls.length).toBe(0)
+  })
+
+  test("permission takes priority over question in status display", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleQuestionAsked("Which format?", "primary")
+    cmux.reset()
+
+    // Permission should override question
+    await coordinator.handlePermissionAsked("Run bash?")
+    await coordinator.flush()
+
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "waiting",
+        icon: "lock",
+        color: "#ef4444",
+      },
+    })
   })
 })

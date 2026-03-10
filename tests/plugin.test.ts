@@ -20,6 +20,8 @@ function createFakeContext(): PluginContext {
 
 describe("plugin initialization", () => {
   const originalWorkspaceID = process.env.CMUX_WORKSPACE_ID
+  const originalSocketPath = process.env.CMUX_SOCKET_PATH
+  const originalCmuxBin = process.env.OPENCODE_CMUX_BIN
 
   afterEach(() => {
     // Restore original env
@@ -27,6 +29,16 @@ describe("plugin initialization", () => {
       process.env.CMUX_WORKSPACE_ID = originalWorkspaceID
     } else {
       delete process.env.CMUX_WORKSPACE_ID
+    }
+    if (originalSocketPath !== undefined) {
+      process.env.CMUX_SOCKET_PATH = originalSocketPath
+    } else {
+      delete process.env.CMUX_SOCKET_PATH
+    }
+    if (originalCmuxBin !== undefined) {
+      process.env.OPENCODE_CMUX_BIN = originalCmuxBin
+    } else {
+      delete process.env.OPENCODE_CMUX_BIN
     }
   })
 
@@ -44,6 +56,8 @@ describe("plugin initialization", () => {
 
   test("returns hooks when CMUX_WORKSPACE_ID is set", async () => {
     process.env.CMUX_WORKSPACE_ID = "workspace:test"
+    process.env.CMUX_SOCKET_PATH = "/tmp/nonexistent-cmux-test.sock"
+    process.env.OPENCODE_CMUX_BIN = "/usr/bin/false"
 
     const hooks = await plugin(createFakeContext())
 
@@ -55,6 +69,8 @@ describe("plugin initialization", () => {
 
   test("event hook does not throw on malformed events", async () => {
     process.env.CMUX_WORKSPACE_ID = "workspace:test"
+    process.env.CMUX_SOCKET_PATH = "/tmp/nonexistent-cmux-test.sock"
+    process.env.OPENCODE_CMUX_BIN = "/usr/bin/false"
 
     const hooks = await plugin(createFakeContext())
 
@@ -70,6 +86,8 @@ describe("plugin initialization", () => {
 
   test("tool hooks do not throw on unexpected input", async () => {
     process.env.CMUX_WORKSPACE_ID = "workspace:test"
+    process.env.CMUX_SOCKET_PATH = "/tmp/nonexistent-cmux-test.sock"
+    process.env.OPENCODE_CMUX_BIN = "/usr/bin/false"
 
     const hooks = await plugin(createFakeContext())
 

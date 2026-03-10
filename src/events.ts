@@ -18,13 +18,13 @@ export interface TodoItem {
   completed: boolean
 }
 
-export function asRecord(value: unknown): Record<string, unknown> | undefined {
+function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
     : undefined
 }
 
-export function getString(record: Record<string, unknown>, keys: string[]): string | undefined {
+function getString(record: Record<string, unknown>, keys: string[]): string | undefined {
   for (const key of keys) {
     const value = record[key]
     if (typeof value === "string" && value.trim()) {

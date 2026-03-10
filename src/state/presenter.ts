@@ -291,7 +291,8 @@ export class CmuxStateCoordinator {
     }
     this.recentFiles.push(relative)
     if (this.recentFiles.length > MAX_RECENT_FILES) {
-      this.recentFiles.shift()
+      const evicted = this.recentFiles.shift()
+      if (evicted !== undefined) this.lastFileEditAt.delete(evicted)
     }
 
     if (this.options.config.logFileEdits) {
@@ -476,6 +477,22 @@ export class CmuxStateCoordinator {
     })
   }
 
+  /**
+   * Builds the next presentation snapshot by evaluating state in priority order.
+   *
+   * Priority (highest to lowest):
+   * 1. Permission pending → show "waiting" with lock icon (#ef4444)
+   * 2. Question pending → show "question" with help-circle icon (#a855f7)
+   * 3. Session busy → show "working: <tool>" with terminal icon (#f59e0b)
+   * 4. Session error → show "error" with alert-circle icon (#ef4444)
+   * 5. Session idle (keepDoneStatus) → show "done" with check-circle icon (#22c55e)
+   *
+   * Progress bar is independent of status — it tracks estimated completion
+   * when the session is busy/waiting and clears when idle/error/done.
+   *
+   * IMPORTANT: Changes to this priority order affect all sidebar behavior.
+   * Update AGENTS.md if the priority changes.
+   */
   private buildSnapshot(): PresentationSnapshot {
     const subagentCount = getBusySubagentCount(this.sessions.values())
 
@@ -582,9 +599,15 @@ export class CmuxStateCoordinator {
       // Schedule a deferred render
       this.renderPending = true
       this.renderTimer = setTimeout(async () => {
-        this.renderPending = false
-        this.renderTimer = undefined
-        await this.renderNow()
+        try {
+          this.renderPending = false
+          this.renderTimer = undefined
+          await this.renderNow()
+        } catch (err) {
+          this.renderPending = false
+          this.renderTimer = undefined
+          this.options.logger.log("error", `Deferred render failed: ${err}`)
+        }
       }, RENDER_THROTTLE_MS - elapsed)
     }
     // If renderPending is already true, do nothing — the timer will pick up the latest state
@@ -635,25 +658,29 @@ export class CmuxStateCoordinator {
     if (this.primaryState?.activity !== "busy") return
 
     this.staleTimer = setTimeout(async () => {
-      // Only act if the primary session is still busy and no events have arrived
-      if (
-        this.primaryState?.activity === "busy" &&
-        Date.now() - this.lastEventAt >= timeoutMs
-      ) {
-        const metadata = this.primaryState.metadata
-        this.setSessionActivity(metadata, "idle")
-        this.primaryState = this.sessions.get(metadata.id)
-        this.pendingQuestion = undefined
-        this.pendingPermission = undefined
-        this.progressTracker.reset()
+      try {
+        // Only act if the primary session is still busy and no events have arrived
+        if (
+          this.primaryState?.activity === "busy" &&
+          Date.now() - this.lastEventAt >= timeoutMs
+        ) {
+          const metadata = this.primaryState.metadata
+          this.setSessionActivity(metadata, "idle")
+          this.primaryState = this.sessions.get(metadata.id)
+          this.pendingQuestion = undefined
+          this.pendingPermission = undefined
+          this.progressTracker.reset()
 
-        await this.options.cmux.log({
-          level: "warning",
-          source: "opencode",
-          message: `${this.options.project.label}: stale session cleared - ${formatSessionLabel(metadata)} (no events for ${Math.round(timeoutMs / 1000)}s)`,
-        })
+          await this.options.cmux.log({
+            level: "warning",
+            source: "opencode",
+            message: `${this.options.project.label}: stale session cleared - ${formatSessionLabel(metadata)} (no events for ${Math.round(timeoutMs / 1000)}s)`,
+          })
 
-        await this.renderNow()
+          await this.renderNow()
+        }
+      } catch (err) {
+        this.options.logger.log("error", `Stale session timer failed: ${err}`)
       }
     }, timeoutMs)
   }
@@ -671,7 +698,15 @@ export class CmuxStateCoordinator {
     }
   }
 
-  /** Cancel pending timers. Useful for cleanup in tests. */
+  /**
+   * Cancel pending timers and flush any queued render.
+   *
+   * Note: OpenCode's plugin API does not expose a shutdown/dispose lifecycle
+   * hook, so this method cannot be called automatically when the host process
+   * exits. All timers are one-shot `setTimeout`s wrapped in try/catch (see
+   * Phase 2a), so they are harmless if they fire after shutdown. This method
+   * exists primarily for deterministic cleanup in tests.
+   */
   public async dispose(): Promise<void> {
     await this.flush()
     if (this.staleTimer) {
