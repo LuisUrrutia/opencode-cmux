@@ -110,6 +110,7 @@ export const defaultTestConfig = {
   logSessionLifecycle: true,
   logTodos: true,
   staleSessionTimeoutMs: 0,
+  doneTimeoutMs: 0,
 } as const
 
 /**

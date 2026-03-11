@@ -1114,4 +1114,181 @@ describe("CmuxStateCoordinator", () => {
       },
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // Done timeout auto-clear
+  // ---------------------------------------------------------------------------
+
+  test("done timeout clears sidebar after idle", async () => {
+    const { coordinator, cmux, config } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    config.doneTimeoutMs = 50
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleSessionStatus("primary", "idle")
+    await coordinator.flush()
+
+    // Should show "done" immediately
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "done",
+        icon: "check-circle",
+        color: "#22c55e",
+      },
+    })
+
+    cmux.reset()
+
+    // Wait for the done timer to fire
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    // Sidebar should now be cleared
+    expect(cmux.calls).toContainEqual({
+      type: "clearStatus",
+      key: "opencode",
+    })
+    expect(cmux.calls).toContainEqual({
+      type: "clearProgress",
+    })
+
+    await coordinator.dispose()
+  })
+
+  test("done timeout is cancelled when session becomes busy again", async () => {
+    const { coordinator, cmux, config } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    config.doneTimeoutMs = 80
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleSessionStatus("primary", "idle")
+    await coordinator.flush()
+
+    // Start a new message before the done timer fires
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.flush()
+    cmux.reset()
+
+    // Wait past the original done timeout
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    // Sidebar should NOT have been cleared — still showing "working"
+    const clearCalls = cmux.calls.filter((c) => c.type === "clearStatus")
+    expect(clearCalls.length).toBe(0)
+
+    await coordinator.dispose()
+  })
+
+  test("done timeout disabled when doneTimeoutMs is 0", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    // doneTimeoutMs defaults to 0 in test config (disabled)
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleSessionStatus("primary", "idle")
+    await coordinator.flush()
+
+    // Should show "done"
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: "opencode",
+      payload: {
+        text: "done",
+        icon: "check-circle",
+        color: "#22c55e",
+      },
+    })
+
+    cmux.reset()
+
+    // Wait a bit — no timer should fire
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    // Sidebar should NOT have been cleared
+    const clearCalls = cmux.calls.filter((c) => c.type === "clearStatus")
+    expect(clearCalls.length).toBe(0)
+
+    await coordinator.dispose()
+  })
+
+  test("done timeout skipped when keepDoneStatus is false", async () => {
+    const { coordinator, cmux, config } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    config.keepDoneStatus = false
+    config.doneTimeoutMs = 50
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleSessionStatus("primary", "idle")
+    await coordinator.flush()
+
+    // With keepDoneStatus=false, sidebar is cleared immediately (no "done" pill)
+    expect(cmux.calls).toContainEqual({
+      type: "clearStatus",
+      key: "opencode",
+    })
+
+    // The notification should still have been sent
+    expect(cmux.calls).toContainEqual({
+      type: "notify",
+      payload: {
+        title: "Done: demo",
+        body: "Build plugin",
+      },
+    })
+
+    await coordinator.dispose()
+  })
+
+  test("dispose cancels done timer", async () => {
+    const { coordinator, cmux, config } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    config.doneTimeoutMs = 50
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleSessionStatus("primary", "idle")
+    await coordinator.flush()
+    cmux.reset()
+
+    // Dispose before the done timer fires
+    await coordinator.dispose()
+
+    // Wait past the done timeout
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    // Sidebar should NOT have been cleared by the timer
+    const clearCalls = cmux.calls.filter((c) => c.type === "clearStatus")
+    expect(clearCalls.length).toBe(0)
+  })
 })

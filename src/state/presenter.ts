@@ -90,6 +90,9 @@ export class CmuxStateCoordinator {
   private lastEventAt = 0
   private staleTimer?: ReturnType<typeof setTimeout>
 
+  /** Done status auto-clear timer */
+  private doneTimer?: ReturnType<typeof setTimeout>
+
   public constructor(private readonly options: CoordinatorOptions) {}
 
   /** Call this from every public handler to keep the watchdog alive. */
@@ -328,6 +331,10 @@ export class CmuxStateCoordinator {
     if (existing?.metadata.kind === "primary") {
       this.primaryState = undefined
       this.progressTracker.reset()
+      if (this.doneTimer) {
+        clearTimeout(this.doneTimer)
+        this.doneTimer = undefined
+      }
     }
 
     if (this.options.config.logSessionLifecycle) {
@@ -383,6 +390,10 @@ export class CmuxStateCoordinator {
     if (metadata.kind === "primary") {
       this.primaryState = this.sessions.get(sessionID)
       this.resetStaleTimer()
+      if (this.doneTimer) {
+        clearTimeout(this.doneTimer)
+        this.doneTimer = undefined
+      }
       if (previous?.activity !== "busy") {
         this.progressTracker.start()
         await this.throttledLog({
@@ -446,6 +457,7 @@ export class CmuxStateCoordinator {
     }
 
     await this.render()
+    this.resetDoneTimer()
   }
 
   private async resolveSession(sessionID: string): Promise<SessionMetadata | null> {
@@ -686,6 +698,37 @@ export class CmuxStateCoordinator {
   }
 
   /**
+   * Done status auto-clear. When the primary session is idle and
+   * `keepDoneStatus` is true, arms a timer that clears the sidebar
+   * after `doneTimeoutMs`. Skipped when `keepDoneStatus` is false
+   * (sidebar is already cleared immediately) or `doneTimeoutMs` is 0.
+   */
+  private resetDoneTimer(): void {
+    if (this.doneTimer) {
+      clearTimeout(this.doneTimer)
+      this.doneTimer = undefined
+    }
+
+    const timeoutMs = this.options.config.doneTimeoutMs
+    if (!timeoutMs || timeoutMs <= 0) return
+    if (!this.options.config.keepDoneStatus) return
+    if (this.primaryState?.activity !== "idle") return
+
+    this.doneTimer = setTimeout(async () => {
+      try {
+        // Guard: only clear if primary is still idle
+        if (this.primaryState?.activity === "idle") {
+          this.primaryState = undefined
+          this.progressTracker.reset()
+          await this.renderNow()
+        }
+      } catch (err) {
+        this.options.logger.log("error", `Done timer failed: ${err}`)
+      }
+    }, timeoutMs)
+  }
+
+  /**
    * Immediately execute any pending deferred render.
    * Useful for cleanup and for tests that need to assert after rapid state changes.
    */
@@ -712,6 +755,10 @@ export class CmuxStateCoordinator {
     if (this.staleTimer) {
       clearTimeout(this.staleTimer)
       this.staleTimer = undefined
+    }
+    if (this.doneTimer) {
+      clearTimeout(this.doneTimer)
+      this.doneTimer = undefined
     }
   }
 

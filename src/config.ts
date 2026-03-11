@@ -43,6 +43,9 @@ export interface PluginConfig {
 
   /** Auto-clear a stuck "working" state after this many ms. 0 = disabled. Env: `OPENCODE_CMUX_STALE_TIMEOUT`. Default: `0` */
   staleSessionTimeoutMs: number
+
+  /** Auto-clear the "done" sidebar pill after this many ms of idle. 0 = disabled (pill persists). Env: `OPENCODE_CMUX_DONE_TIMEOUT`. Default: `10000` */
+  doneTimeoutMs: number
 }
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"])
@@ -94,5 +97,6 @@ export function loadConfig(
     logSessionLifecycle: parseBoolean(env.OPENCODE_CMUX_LOG_SESSION_LIFECYCLE, true),
     logTodos: parseBoolean(env.OPENCODE_CMUX_LOG_TODOS, true),
     staleSessionTimeoutMs: parseNumber(env.OPENCODE_CMUX_STALE_TIMEOUT, 0),
+    doneTimeoutMs: parseNumber(env.OPENCODE_CMUX_DONE_TIMEOUT, 10_000),
   }
 }
