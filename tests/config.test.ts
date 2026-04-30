@@ -18,6 +18,7 @@ describe("loadConfig", () => {
     expect(config.logFileEdits).toBe(true)
     expect(config.logSessionLifecycle).toBe(true)
     expect(config.logTodos).toBe(true)
+    expect(config.gitIntegration).toBe(true)
     expect(config.staleSessionTimeoutMs).toBe(0)
   })
 
@@ -34,6 +35,7 @@ describe("loadConfig", () => {
       OPENCODE_CMUX_LOG_FILE_EDITS: "no",
       OPENCODE_CMUX_LOG_SESSION_LIFECYCLE: "0",
       OPENCODE_CMUX_LOG_TODOS: "off",
+      OPENCODE_CMUX_GIT: "false",
     })
 
     expect(config.notifySubagents).toBe(true)
@@ -47,6 +49,7 @@ describe("loadConfig", () => {
     expect(config.logFileEdits).toBe(false)
     expect(config.logSessionLifecycle).toBe(false)
     expect(config.logTodos).toBe(false)
+    expect(config.gitIntegration).toBe(false)
   })
 
   test("parses staleSessionTimeoutMs from env", () => {

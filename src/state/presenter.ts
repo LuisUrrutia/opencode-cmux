@@ -1,5 +1,6 @@
 import type { PluginConfig } from "../config.js"
 import { describeToolCall, toRelativePath, type TodoItem } from "../events.js"
+import { detectGitInfo, isGitCommand } from "../features/git.js"
 import type {
   CmuxClient,
   PluginLogger,
@@ -224,6 +225,7 @@ export class CmuxStateCoordinator {
     args?: Record<string, unknown>,
   ): Promise<void> {
     this.touchEventTimestamp()
+    await this.clearNotificationsBestEffort()
     const callID = `${tool}-${++this.toolCallCount}`
     this.activeTools.set(callID, {
       tool,
@@ -271,6 +273,8 @@ export class CmuxStateCoordinator {
         message: `${this.options.project.label}: finished ${label}${verbose}`,
       })
     }
+
+    await this.refreshGitStateIfNeeded(tool, args)
 
     await this.render()
   }
@@ -380,6 +384,20 @@ export class CmuxStateCoordinator {
     }
   }
 
+  public async syncGitState(): Promise<void> {
+    if (!this.options.config.gitIntegration) return
+    const root = this.options.project.root
+    if (!root) return
+
+    try {
+      const gitInfo = detectGitInfo(root)
+      if (!gitInfo.branch) return
+      await this.options.cmux.reportGitBranch(gitInfo.branch, gitInfo.dirty)
+    } catch {
+      // Best effort only.
+    }
+  }
+
   private async markBusy(sessionID: string): Promise<void> {
     const metadata = await this.resolveSession(sessionID)
     if (!metadata) return
@@ -462,6 +480,36 @@ export class CmuxStateCoordinator {
 
   private async resolveSession(sessionID: string): Promise<SessionMetadata | null> {
     return this.options.sessionResolver.getSessionMetadata(sessionID)
+  }
+
+  private async clearNotificationsBestEffort(): Promise<void> {
+    try {
+      await this.options.cmux.clearNotifications()
+    } catch {
+      // Best effort only.
+    }
+  }
+
+  private async refreshGitStateIfNeeded(
+    tool: string,
+    args?: Record<string, unknown>,
+  ): Promise<void> {
+    if (tool !== "bash") return
+    if (!this.options.config.gitIntegration) return
+
+    const command = this.extractBashCommand(args)
+    if (!command || !isGitCommand(command)) return
+
+    await this.syncGitState()
+  }
+
+  private extractBashCommand(args?: Record<string, unknown>): string | undefined {
+    if (!args) return undefined
+    const command = args.command
+    if (typeof command === "string" && command.trim()) return command
+    const cmd = args.cmd
+    if (typeof cmd === "string" && cmd.trim()) return cmd
+    return undefined
   }
 
   /**

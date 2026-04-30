@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process"
 import type { PluginLogger, CmuxClient } from "../types.js"
 import {
+  buildClearNotificationsCommand,
   buildClearProgressCommand,
   buildClearStatusCommand,
   buildLogCommand,
   buildNotifyCommand,
+  buildReportGitBranchCommand,
   buildSetProgressCommand,
   buildSetStatusCommand,
 } from "./commands.js"
@@ -71,6 +73,13 @@ class CliCmuxClient implements CmuxClient {
     await this.execute("notify", buildNotifyCommand(payload, this.workspaceID))
   }
 
+  public async clearNotifications(): Promise<void> {
+    await this.execute(
+      "clear-notifications",
+      buildClearNotificationsCommand(this.workspaceID),
+    )
+  }
+
   public async setStatus(
     key: string,
     payload: Parameters<CmuxClient["setStatus"]>[1],
@@ -100,6 +109,13 @@ class CliCmuxClient implements CmuxClient {
 
   public async log(payload: Parameters<CmuxClient["log"]>[0]): Promise<void> {
     await this.execute("log", buildLogCommand(payload, this.workspaceID))
+  }
+
+  public async reportGitBranch(branch: string, dirty: boolean): Promise<void> {
+    await this.execute(
+      "report-git-branch",
+      buildReportGitBranchCommand(branch, dirty, this.workspaceID),
+    )
   }
 
   private async execute(label: string, args: string[]): Promise<void> {

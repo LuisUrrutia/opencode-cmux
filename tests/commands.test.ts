@@ -2,17 +2,21 @@ import { describe, expect, test } from "bun:test"
 import {
   // CLI builders
   buildNotifyCommand,
+  buildClearNotificationsCommand,
   buildSetStatusCommand,
   buildClearStatusCommand,
   buildSetProgressCommand,
   buildClearProgressCommand,
   buildLogCommand,
+  buildReportGitBranchCommand,
   // Socket text-format builders
   buildSocketSetStatus,
   buildSocketClearStatus,
+  buildSocketClearNotifications,
   buildSocketSetProgress,
   buildSocketClearProgress,
   buildSocketLog,
+  buildSocketReportGitBranch,
   // Socket JSON-RPC builders
   buildJsonRpc,
   buildSocketNotify,
@@ -66,6 +70,11 @@ describe("CLI command builders", () => {
   test("buildNotifyCommand without workspace omits --workspace", () => {
     const result = buildNotifyCommand({ title: "Build done" })
     expect(result).not.toContain("--workspace")
+  })
+
+  test("buildClearNotificationsCommand with workspace", () => {
+    const result = buildClearNotificationsCommand("ws-123")
+    expect(result).toEqual(["clear-notifications", "--workspace", "ws-123"])
   })
 
   test("buildSetStatusCommand with workspace", () => {
@@ -127,6 +136,23 @@ describe("CLI command builders", () => {
   test("buildClearProgressCommand with workspace", () => {
     const result = buildClearProgressCommand("ws-123")
     expect(result).toEqual(["clear-progress", "--workspace", "ws-123"])
+  })
+
+  test("buildReportGitBranchCommand with dirty state and workspace", () => {
+    const result = buildReportGitBranchCommand("main", true, "ws-123")
+    expect(result).toEqual([
+      "report-git-branch",
+      "main",
+      "--status",
+      "dirty",
+      "--workspace",
+      "ws-123",
+    ])
+  })
+
+  test("buildReportGitBranchCommand omits dirty flag when clean", () => {
+    const result = buildReportGitBranchCommand("main", false)
+    expect(result).toEqual(["report-git-branch", "main"])
   })
 
   test("buildLogCommand with workspace", () => {
@@ -240,6 +266,18 @@ describe("Socket text-format builders", () => {
     })
   })
 
+  describe("buildSocketClearNotifications", () => {
+    test("produces correct format with tab", () => {
+      const result = buildSocketClearNotifications(workspaceID)
+      expect(result).toBe(`clear_notifications --tab=${workspaceID}\n`)
+    })
+
+    test("omits --tab= when workspaceID is undefined", () => {
+      const result = buildSocketClearNotifications()
+      expect(result).toBe("clear_notifications\n")
+    })
+  })
+
   describe("buildSocketLog", () => {
     test("produces correct format with -- separator for message", () => {
       const result = buildSocketLog(
@@ -272,6 +310,18 @@ describe("Socket text-format builders", () => {
         message: "Hello",
       })
       expect(result).toBe("log --level=info --source=test -- Hello\n")
+    })
+  })
+
+  describe("buildSocketReportGitBranch", () => {
+    test("produces correct format with dirty state and tab", () => {
+      const result = buildSocketReportGitBranch("main", true, workspaceID)
+      expect(result).toBe(`report_git_branch main --status=dirty --tab=${workspaceID}\n`)
+    })
+
+    test("omits dirty flag when clean", () => {
+      const result = buildSocketReportGitBranch("main", false)
+      expect(result).toBe("report_git_branch main\n")
     })
   })
 

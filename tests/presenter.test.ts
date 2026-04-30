@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { execFileSync } from "node:child_process"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { FakeCmuxClient, createCoordinator } from "./helpers/index.ts"
 
 describe("FakeCmuxClient", () => {
@@ -9,6 +13,80 @@ describe("FakeCmuxClient", () => {
 })
 
 describe("CmuxStateCoordinator", () => {
+  test("clears notifications when a tool starts", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    cmux.reset()
+
+    await coordinator.handleToolStarted("bash", { command: "npm test" })
+
+    expect(cmux.calls[0]).toEqual({ type: "clearNotifications" })
+  })
+
+  test("reports git branch after a git bash command completes", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "opencode-cmux-git-"))
+    try {
+      execFileSync("git", ["init", "-b", "main"], { cwd: repoDir })
+      writeFileSync(join(repoDir, "dirty.txt"), "dirty\n")
+
+      const { coordinator, cmux } = createCoordinator(
+        {
+          primary: {
+            id: "primary",
+            title: "Implement feature",
+            kind: "primary",
+          },
+        },
+        { root: repoDir },
+      )
+
+      await coordinator.handleToolCompleted("bash", { command: "git status" })
+
+      expect(cmux.calls).toContainEqual({
+        type: "reportGitBranch",
+        branch: "main",
+        dirty: true,
+      })
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true })
+    }
+  })
+
+  test("syncGitState reports branch metadata on initialization", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "opencode-cmux-git-init-"))
+    try {
+      execFileSync("git", ["init", "-b", "main"], { cwd: repoDir })
+
+      const { coordinator, cmux } = createCoordinator(
+        {
+          primary: {
+            id: "primary",
+            title: "Implement feature",
+            kind: "primary",
+          },
+        },
+        { root: repoDir },
+      )
+
+      await coordinator.syncGitState()
+
+      expect(cmux.calls).toContainEqual({
+        type: "reportGitBranch",
+        branch: "main",
+        dirty: false,
+      })
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true })
+    }
+  })
+
   test("maps a primary busy -> idle lifecycle to sidebar output", async () => {
     const { coordinator, cmux } = createCoordinator({
       primary: {

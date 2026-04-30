@@ -187,6 +187,32 @@ describe("SocketCmuxClient", () => {
     expect(client.available).toBe(true)
   })
 
+  describe("clearNotifications and reportGitBranch", () => {
+    test("send text commands to the socket", async () => {
+      let received = ""
+      const ts = await createTestServer((data) => {
+        received = data
+        return "OK"
+      })
+
+      const logger = createTestLogger()
+      const client = new SocketCmuxClient({
+        socketPath: ts.socketPath,
+        workspaceID,
+        logger,
+      })
+
+      await client.clearNotifications()
+      expect(received.trim()).toBe(`clear_notifications --tab=${workspaceID}`)
+
+      received = ""
+      await client.reportGitBranch("main", true)
+      expect(received.trim()).toBe(
+        `report_git_branch main --status=dirty --tab=${workspaceID}`,
+      )
+    })
+  })
+
   describe("notify (JSON-RPC)", () => {
     test("sends JSON-RPC to server and receives ok:true response", async () => {
       let receivedData = ""

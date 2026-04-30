@@ -117,12 +117,14 @@ export interface CmuxClient {
   readonly available: boolean
   readonly transport: "cli" | "socket"
   readonly workspaceID?: string
+  clearNotifications(): Promise<void>
   notify(payload: NotificationPayload): Promise<void>
   setStatus(key: string, payload: SidebarStatusPayload): Promise<void>
   clearStatus(key: string): Promise<void>
   setProgress(payload: ProgressPayload): Promise<void>
   clearProgress(): Promise<void>
   log(payload: SidebarLogPayload): Promise<void>
+  reportGitBranch(branch: string, dirty: boolean): Promise<void>
 }
 
 export interface PluginLogger {

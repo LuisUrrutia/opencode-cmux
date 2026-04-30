@@ -23,6 +23,20 @@ export function buildNotifyCommand(
   return withWorkspace(args, workspaceID)
 }
 
+export function buildClearNotificationsCommand(workspaceID?: string): string[] {
+  return withWorkspace(["clear-notifications"], workspaceID)
+}
+
+export function buildReportGitBranchCommand(
+  branch: string,
+  dirty: boolean,
+  workspaceID?: string,
+): string[] {
+  const args = ["report-git-branch", branch]
+  if (dirty) args.push("--status", "dirty")
+  return withWorkspace(args, workspaceID)
+}
+
 export function buildSetStatusCommand(
   key: string,
   payload: SidebarStatusPayload,
@@ -105,6 +119,19 @@ export function buildSocketClearStatus(
   workspaceID?: string,
 ): string {
   return withTab(`clear_status ${key}`, workspaceID)
+}
+
+export function buildSocketClearNotifications(workspaceID?: string): string {
+  return withTab("clear_notifications", workspaceID)
+}
+
+export function buildSocketReportGitBranch(
+  branch: string,
+  dirty: boolean,
+  workspaceID?: string,
+): string {
+  const command = `report_git_branch ${quote(branch)}${dirty ? " --status=dirty" : ""}`
+  return withTab(command, workspaceID)
 }
 
 export function buildSocketSetProgress(

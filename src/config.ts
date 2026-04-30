@@ -41,6 +41,9 @@ export interface PluginConfig {
   /** Log todo progress changes to the sidebar. Env: `OPENCODE_CMUX_LOG_TODOS`. Default: `true` */
   logTodos: boolean
 
+  /** Report git branch metadata to cmux. Env: `OPENCODE_CMUX_GIT`. Default: `true` */
+  gitIntegration: boolean
+
   /** Auto-clear a stuck "working" state after this many ms. 0 = disabled. Env: `OPENCODE_CMUX_STALE_TIMEOUT`. Default: `0` */
   staleSessionTimeoutMs: number
 
@@ -96,6 +99,7 @@ export function loadConfig(
     logFileEdits: parseBoolean(env.OPENCODE_CMUX_LOG_FILE_EDITS, true),
     logSessionLifecycle: parseBoolean(env.OPENCODE_CMUX_LOG_SESSION_LIFECYCLE, true),
     logTodos: parseBoolean(env.OPENCODE_CMUX_LOG_TODOS, true),
+    gitIntegration: parseBoolean(env.OPENCODE_CMUX_GIT, true),
     staleSessionTimeoutMs: parseNumber(env.OPENCODE_CMUX_STALE_TIMEOUT, 0),
     doneTimeoutMs: parseNumber(env.OPENCODE_CMUX_DONE_TIMEOUT, 10_000),
   }

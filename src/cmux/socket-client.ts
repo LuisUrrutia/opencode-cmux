@@ -8,10 +8,12 @@ import type {
   SidebarStatusPayload,
 } from "../types.js"
 import {
+  buildSocketClearNotifications,
   buildSocketClearProgress,
   buildSocketClearStatus,
   buildSocketLog,
   buildSocketNotify,
+  buildSocketReportGitBranch,
   buildSocketSetProgress,
   buildSocketSetStatus,
   parseCmuxResponse,
@@ -157,6 +159,11 @@ export class SocketCmuxClient implements CmuxClient {
     await this.sendJsonRpc(message, "notify")
   }
 
+  public async clearNotifications(): Promise<void> {
+    const message = buildSocketClearNotifications(this.workspaceID)
+    await this.sendText(message, "clear_notifications")
+  }
+
   public async setStatus(
     key: string,
     payload: SidebarStatusPayload,
@@ -183,6 +190,11 @@ export class SocketCmuxClient implements CmuxClient {
   public async log(payload: SidebarLogPayload): Promise<void> {
     const message = buildSocketLog(payload, this.workspaceID)
     await this.sendText(message, "log")
+  }
+
+  public async reportGitBranch(branch: string, dirty: boolean): Promise<void> {
+    const message = buildSocketReportGitBranch(branch, dirty, this.workspaceID)
+    await this.sendText(message, "report_git_branch")
   }
 
   // -------------------------------------------------------------------------

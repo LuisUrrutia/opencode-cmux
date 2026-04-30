@@ -25,18 +25,24 @@ import type {
 // ---------------------------------------------------------------------------
 
 export type FakeCall =
+  | { type: "clearNotifications" }
   | { type: "notify"; payload: NotificationPayload }
   | { type: "setStatus"; key: string; payload: SidebarStatusPayload }
   | { type: "clearStatus"; key: string }
   | { type: "setProgress"; payload: ProgressPayload }
   | { type: "clearProgress" }
   | { type: "log"; payload: SidebarLogPayload }
+  | { type: "reportGitBranch"; branch: string; dirty: boolean }
 
 export class FakeCmuxClient implements CmuxClient {
   public readonly available = true
   public readonly transport = "cli" as const
   public readonly workspaceID = "workspace:1"
   public readonly calls: FakeCall[] = []
+
+  public async clearNotifications(): Promise<void> {
+    this.calls.push({ type: "clearNotifications" })
+  }
 
   public async notify(payload: NotificationPayload): Promise<void> {
     this.calls.push({ type: "notify", payload })
@@ -63,6 +69,10 @@ export class FakeCmuxClient implements CmuxClient {
 
   public async log(payload: SidebarLogPayload): Promise<void> {
     this.calls.push({ type: "log", payload })
+  }
+
+  public async reportGitBranch(branch: string, dirty: boolean): Promise<void> {
+    this.calls.push({ type: "reportGitBranch", branch, dirty })
   }
 
   public reset(): void {
@@ -109,6 +119,7 @@ export const defaultTestConfig = {
   logFileEdits: true,
   logSessionLifecycle: true,
   logTodos: true,
+  gitIntegration: true,
   staleSessionTimeoutMs: 0,
   doneTimeoutMs: 0,
 } as const
@@ -117,7 +128,10 @@ export const defaultTestConfig = {
  * Create a CmuxStateCoordinator wired to fakes, ready for testing.
  * Returns the coordinator plus the fake cmux client and config for assertions.
  */
-export function createCoordinator(sessions: Record<string, SessionMetadata>) {
+export function createCoordinator(
+  sessions: Record<string, SessionMetadata>,
+  options: { root?: string; label?: string } = {},
+) {
   const cmux = new FakeCmuxClient()
   const config = { ...defaultTestConfig }
   const coordinator = new CmuxStateCoordinator({
@@ -126,8 +140,8 @@ export function createCoordinator(sessions: Record<string, SessionMetadata>) {
     logger: noopLogger,
     project: {
       id: "demo",
-      label: "demo",
-      root: "/tmp/demo",
+      label: options.label ?? "demo",
+      root: options.root ?? "/tmp/demo",
     },
     sessionResolver: new FakeSessionResolver(sessions),
   })
