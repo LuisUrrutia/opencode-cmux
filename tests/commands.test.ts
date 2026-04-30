@@ -8,6 +8,7 @@ import {
   buildSetProgressCommand,
   buildClearProgressCommand,
   buildLogCommand,
+  buildClearLogCommand,
   buildReportGitBranchCommand,
   // Socket text-format builders
   buildSocketSetStatus,
@@ -17,6 +18,7 @@ import {
   buildSocketSetProgress,
   buildSocketClearProgress,
   buildSocketLog,
+  buildSocketClearLog,
   buildSocketReportGitBranch,
   // Socket JSON-RPC builders
   buildJsonRpc,
@@ -191,6 +193,11 @@ describe("CLI command builders", () => {
       "ws-123",
     ])
   })
+
+  test("buildClearLogCommand with workspace", () => {
+    const result = buildClearLogCommand("ws-123")
+    expect(result).toEqual(["clear-log", "--workspace", "ws-123"])
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -358,6 +365,18 @@ describe("Socket text-format builders", () => {
     })
   })
 
+  describe("buildSocketClearLog", () => {
+    test("produces correct format with tab", () => {
+      const result = buildSocketClearLog(workspaceID)
+      expect(result).toBe(`clear_log --tab=${workspaceID}\n`)
+    })
+
+    test("omits --tab= when workspaceID is undefined", () => {
+      const result = buildSocketClearLog()
+      expect(result).toBe("clear_log\n")
+    })
+  })
+
   describe("buildSocketReportGitBranch", () => {
     test("produces correct format with dirty state and tab", () => {
       const result = buildSocketReportGitBranch("main", true, workspaceID)
@@ -377,6 +396,7 @@ describe("Socket text-format builders", () => {
       buildSocketSetProgress({ value: 0.5, label: "l" }),
       buildSocketClearProgress(),
       buildSocketLog({ level: "info", source: "s", message: "m" }),
+      buildSocketClearLog(),
     ]
     for (const result of builders) {
       expect(result.endsWith("\n")).toBe(true)

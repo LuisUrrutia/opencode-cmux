@@ -117,6 +117,7 @@ export interface CmuxClient {
   readonly available: boolean
   readonly transport: "cli" | "socket"
   readonly workspaceID?: string
+  readonly tabID?: string
   readonly surfaceID?: string
   clearNotifications(): Promise<void>
   notify(payload: NotificationPayload): Promise<void>
@@ -125,6 +126,7 @@ export interface CmuxClient {
   setProgress(payload: ProgressPayload): Promise<void>
   clearProgress(): Promise<void>
   log(payload: SidebarLogPayload): Promise<void>
+  clearLog(): Promise<void>
   reportGitBranch(branch: string, dirty: boolean): Promise<void>
 }
 
@@ -137,5 +139,8 @@ export interface PluginLogger {
 }
 
 export interface SessionResolver {
-  getSessionMetadata(sessionID: string): Promise<SessionMetadata | null>
+  getSessionMetadata(
+    sessionID: string,
+    options?: { fresh?: boolean },
+  ): Promise<SessionMetadata | null>
 }

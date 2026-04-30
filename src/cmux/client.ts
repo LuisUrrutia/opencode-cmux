@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process"
 import type { PluginLogger, CmuxClient } from "../types.js"
 import {
+  buildClearLogCommand,
   buildClearNotificationsCommand,
   buildClearProgressCommand,
   buildClearStatusCommand,
@@ -62,12 +63,14 @@ class CliCmuxClient implements CmuxClient {
   public readonly available: boolean
   public readonly transport = "cli" as const
   public readonly workspaceID?: string
+  public readonly tabID?: string
   public readonly surfaceID?: string
   private reportedMissingBinary = false
 
   public constructor(private readonly options: CreateCmuxClientOptions) {
     this.available = options.environment.isManagedWorkspace
     this.workspaceID = options.environment.workspaceID
+    this.tabID = options.environment.tabID
     this.surfaceID = options.environment.surfaceID
   }
 
@@ -114,6 +117,10 @@ class CliCmuxClient implements CmuxClient {
 
   public async log(payload: Parameters<CmuxClient["log"]>[0]): Promise<void> {
     await this.execute("log", buildLogCommand(payload, this.workspaceID))
+  }
+
+  public async clearLog(): Promise<void> {
+    await this.execute("clear-log", buildClearLogCommand(this.workspaceID))
   }
 
   public async reportGitBranch(branch: string, dirty: boolean): Promise<void> {
@@ -195,6 +202,7 @@ export function createCmuxClient(options: CreateCmuxClientOptions): CmuxClient {
     return new SocketCmuxClient({
       socketPath: options.environment.socketPath,
       workspaceID: options.environment.workspaceID,
+      tabID: options.environment.tabID ?? options.environment.workspaceID,
       surfaceID: options.environment.surfaceID,
       logger: options.logger,
     })

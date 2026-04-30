@@ -2,6 +2,7 @@ import { statSync } from "node:fs"
 
 export interface CmuxEnvironment {
   workspaceID?: string
+  tabID?: string
   surfaceID?: string
   socketPath: string
   isManagedWorkspace: boolean
@@ -28,10 +29,12 @@ export function detectCmuxEnvironment(
 ): CmuxEnvironment {
   const socketPath = normalize(env.CMUX_SOCKET_PATH) ?? "/tmp/cmux.sock"
   const workspaceID = normalize(env.CMUX_WORKSPACE_ID)
+  const tabID = normalize(env.CMUX_TAB_ID)
   const surfaceID = normalize(env.CMUX_SURFACE_ID)
 
   return {
     workspaceID,
+    tabID,
     surfaceID,
     socketPath,
     isManagedWorkspace: workspaceID !== undefined,

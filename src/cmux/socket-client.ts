@@ -8,12 +8,12 @@ import type {
   SidebarStatusPayload,
 } from "../types.js"
 import {
+  buildSocketClearLog,
   buildSocketClearNotifications,
   buildSocketClearProgress,
   buildSocketClearStatus,
   buildSocketLog,
   buildSocketNotify,
-  buildSocketNotifyTarget,
   buildSocketReportGitBranch,
   buildSocketSetProgress,
   buildSocketSetStatus,
@@ -128,6 +128,7 @@ export function socketRequest(
 interface SocketCmuxClientOptions {
   socketPath: string
   workspaceID?: string
+  tabID?: string
   surfaceID?: string
   logger: PluginLogger
   timeoutMs?: number
@@ -139,6 +140,7 @@ export class SocketCmuxClient implements CmuxClient {
   public readonly available: boolean
   public readonly transport = "socket" as const
   public readonly workspaceID?: string
+  public readonly tabID?: string
   public readonly surfaceID?: string
 
   private requestCounter = 0
@@ -151,6 +153,7 @@ export class SocketCmuxClient implements CmuxClient {
   constructor(options: SocketCmuxClientOptions) {
     this.socketPath = options.socketPath
     this.workspaceID = options.workspaceID
+    this.tabID = options.tabID ?? options.workspaceID
     this.surfaceID = options.surfaceID
     this.logger = options.logger
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -159,12 +162,6 @@ export class SocketCmuxClient implements CmuxClient {
 
   public async notify(payload: NotificationPayload): Promise<void> {
     const requestID = this.nextRequestID()
-    if (this.workspaceID && this.surfaceID) {
-      const message = buildSocketNotifyTarget(payload, this.workspaceID, this.surfaceID)
-      await this.sendText(message, "notify_target")
-      return
-    }
-
     const message = buildSocketNotify(
       payload,
       requestID,
@@ -175,7 +172,7 @@ export class SocketCmuxClient implements CmuxClient {
   }
 
   public async clearNotifications(): Promise<void> {
-    const message = buildSocketClearNotifications(this.workspaceID)
+    const message = buildSocketClearNotifications(this.tabID)
     await this.sendText(message, "clear_notifications")
   }
 
@@ -183,32 +180,37 @@ export class SocketCmuxClient implements CmuxClient {
     key: string,
     payload: SidebarStatusPayload,
   ): Promise<void> {
-    const message = buildSocketSetStatus(key, payload, this.workspaceID)
+    const message = buildSocketSetStatus(key, payload, this.tabID)
     await this.sendText(message, "set_status")
   }
 
   public async clearStatus(key: string): Promise<void> {
-    const message = buildSocketClearStatus(key, this.workspaceID)
+    const message = buildSocketClearStatus(key, this.tabID)
     await this.sendText(message, "clear_status")
   }
 
   public async setProgress(payload: ProgressPayload): Promise<void> {
-    const message = buildSocketSetProgress(payload, this.workspaceID)
+    const message = buildSocketSetProgress(payload, this.tabID)
     await this.sendText(message, "set_progress")
   }
 
   public async clearProgress(): Promise<void> {
-    const message = buildSocketClearProgress(this.workspaceID)
+    const message = buildSocketClearProgress(this.tabID)
     await this.sendText(message, "clear_progress")
   }
 
   public async log(payload: SidebarLogPayload): Promise<void> {
-    const message = buildSocketLog(payload, this.workspaceID)
+    const message = buildSocketLog(payload, this.tabID)
     await this.sendText(message, "log")
   }
 
+  public async clearLog(): Promise<void> {
+    const message = buildSocketClearLog(this.tabID)
+    await this.sendText(message, "clear_log")
+  }
+
   public async reportGitBranch(branch: string, dirty: boolean): Promise<void> {
-    const message = buildSocketReportGitBranch(branch, dirty, this.workspaceID)
+    const message = buildSocketReportGitBranch(branch, dirty, this.tabID)
     await this.sendText(message, "report_git_branch")
   }
 

@@ -9,6 +9,7 @@ export type NormalizedEvent =
   | { type: "permission.replied" }
   | { type: "file.edited"; filePath: string; sessionID?: string }
   | { type: "session.created"; sessionID: string }
+  | { type: "session.updated"; sessionID: string }
   | { type: "session.deleted"; sessionID: string }
   | { type: "session.compacted"; sessionID: string }
   | { type: "todo.updated"; items: TodoItem[] }
@@ -36,7 +37,17 @@ function getString(record: Record<string, unknown>, keys: string[]): string | un
 }
 
 function readSessionID(properties: Record<string, unknown>): string | undefined {
-  return getString(properties, ["sessionID", "sessionId", "id"])
+  const direct = getString(properties, ["sessionID", "sessionId", "id"])
+  if (direct) return direct
+
+  for (const key of ["session", "info", "data"]) {
+    const record = asRecord(properties[key])
+    if (!record) continue
+    const nested = getString(record, ["sessionID", "sessionId", "id"])
+    if (nested) return nested
+  }
+
+  return undefined
 }
 
 /**
@@ -181,6 +192,12 @@ export function normalizeEvent(event: UnknownEvent): NormalizedEvent | null {
       const sessionID = readSessionID(properties)
       if (!sessionID) return null
       return { type: "session.created", sessionID }
+    }
+
+    case "session.updated": {
+      const sessionID = readSessionID(properties)
+      if (!sessionID) return null
+      return { type: "session.updated", sessionID }
     }
 
     case "session.deleted": {

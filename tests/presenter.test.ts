@@ -13,12 +13,17 @@ describe("FakeCmuxClient", () => {
 })
 
 describe("CmuxStateCoordinator", () => {
-  test("initialize clears stale notifications", async () => {
+  test("initialize clears stale cmux presentation", async () => {
     const { coordinator, cmux } = createCoordinator({})
 
     await coordinator.initialize()
 
-    expect(cmux.calls[0]).toEqual({ type: "clearNotifications" })
+    expect(cmux.calls).toEqual([
+      { type: "clearNotifications" },
+      { type: "clearStatus", key: "opencode" },
+      { type: "clearProgress" },
+      { type: "clearLog" },
+    ])
   })
 
   test("clears notifications when a tool starts", async () => {
@@ -38,7 +43,7 @@ describe("CmuxStateCoordinator", () => {
     expect(cmux.calls[0]).toEqual({ type: "clearNotifications" })
   })
 
-  test("clears notifications when a session is created", async () => {
+  test("clears stale cmux presentation when a primary session is created", async () => {
     const { coordinator, cmux } = createCoordinator({
       primary: {
         id: "primary",
@@ -49,7 +54,62 @@ describe("CmuxStateCoordinator", () => {
 
     await coordinator.handleSessionCreated("primary")
 
-    expect(cmux.calls[0]).toEqual({ type: "clearNotifications" })
+    expect(cmux.calls).toContainEqual({ type: "clearNotifications" })
+    expect(cmux.calls).toContainEqual({ type: "clearStatus", key: "opencode" })
+    expect(cmux.calls).toContainEqual({ type: "clearProgress" })
+    expect(cmux.calls).toContainEqual({ type: "clearLog" })
+  })
+
+  test("cleans cmux presentation when a primary session is deleted", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.flush()
+    cmux.reset()
+
+    await coordinator.handleSessionDeleted("primary")
+
+    expect(cmux.calls).toContainEqual({ type: "clearNotifications" })
+    expect(cmux.calls).toContainEqual({ type: "clearStatus", key: "opencode" })
+    expect(cmux.calls).toContainEqual({ type: "clearProgress" })
+    expect(cmux.calls).toContainEqual({ type: "clearLog" })
+  })
+
+  test("session.updated refreshes renamed session metadata", async () => {
+    const { coordinator, cmux, sessionResolver } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Old title",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.flush()
+    cmux.reset()
+    sessionResolver.setSession("primary", {
+      id: "primary",
+      title: "Renamed title",
+      kind: "primary",
+    })
+
+    await coordinator.handleSessionUpdated("primary")
+    await coordinator.handleSessionStatus("primary", "idle")
+    await coordinator.flush()
+
+    expect(cmux.calls).toContainEqual({
+      type: "notify",
+      payload: {
+        title: "Done: demo",
+        body: "Renamed title",
+      },
+    })
   })
 
   test("reports git branch after a git bash command completes", async () => {
@@ -1387,8 +1447,8 @@ describe("CmuxStateCoordinator", () => {
     // Wait past the done timeout
     await new Promise((resolve) => setTimeout(resolve, 100))
 
-    // Sidebar should NOT have been cleared by the timer
+    // Dispose should clear once immediately, and the cancelled timer should not clear again.
     const clearCalls = cmux.calls.filter((c) => c.type === "clearStatus")
-    expect(clearCalls.length).toBe(0)
+    expect(clearCalls.length).toBe(1)
   })
 })

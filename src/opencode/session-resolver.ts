@@ -17,9 +17,12 @@ export class OpencodeSessionResolver implements SessionResolver {
     private readonly logger: PluginLogger,
   ) {}
 
-  public async getSessionMetadata(sessionID: string): Promise<SessionMetadata> {
+  public async getSessionMetadata(
+    sessionID: string,
+    options: { fresh?: boolean } = {},
+  ): Promise<SessionMetadata> {
     const cached = this.cache.get(sessionID)
-    if (cached) return cached
+    if (cached && !options.fresh) return cached
 
     // Don't retry too quickly after a transient failure
     const lastFail = this.failedAt.get(sessionID)

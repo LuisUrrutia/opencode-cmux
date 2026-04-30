@@ -32,12 +32,14 @@ export type FakeCall =
   | { type: "setProgress"; payload: ProgressPayload }
   | { type: "clearProgress" }
   | { type: "log"; payload: SidebarLogPayload }
+  | { type: "clearLog" }
   | { type: "reportGitBranch"; branch: string; dirty: boolean }
 
 export class FakeCmuxClient implements CmuxClient {
   public readonly available = true
   public readonly transport = "cli" as const
   public readonly workspaceID = "workspace:1"
+  public readonly tabID = "tab:1"
   public readonly surfaceID = "surface:1"
   public readonly calls: FakeCall[] = []
 
@@ -72,6 +74,10 @@ export class FakeCmuxClient implements CmuxClient {
     this.calls.push({ type: "log", payload })
   }
 
+  public async clearLog(): Promise<void> {
+    this.calls.push({ type: "clearLog" })
+  }
+
   public async reportGitBranch(branch: string, dirty: boolean): Promise<void> {
     this.calls.push({ type: "reportGitBranch", branch, dirty })
   }
@@ -90,6 +96,10 @@ export class FakeSessionResolver implements SessionResolver {
 
   public async getSessionMetadata(sessionID: string): Promise<SessionMetadata | null> {
     return this.sessions[sessionID] ?? null
+  }
+
+  public setSession(sessionID: string, metadata: SessionMetadata): void {
+    this.sessions[sessionID] = metadata
   }
 }
 
@@ -135,6 +145,7 @@ export function createCoordinator(
 ) {
   const cmux = new FakeCmuxClient()
   const config = { ...defaultTestConfig }
+  const sessionResolver = new FakeSessionResolver(sessions)
   const coordinator = new CmuxStateCoordinator({
     cmux,
     config,
@@ -144,8 +155,8 @@ export function createCoordinator(
       label: options.label ?? "demo",
       root: options.root ?? "/tmp/demo",
     },
-    sessionResolver: new FakeSessionResolver(sessions),
+    sessionResolver,
   })
 
-  return { coordinator, cmux, config }
+  return { coordinator, cmux, config, sessionResolver }
 }

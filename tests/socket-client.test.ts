@@ -237,11 +237,11 @@ describe("SocketCmuxClient", () => {
       expect(logger.calls).toHaveLength(0) // No warnings
     })
 
-    test("uses notify_target text protocol when workspace and surface are available", async () => {
+    test("uses JSON-RPC with workspace and surface when both are available", async () => {
       let receivedData = ""
       const ts = await createTestServer((data) => {
         receivedData = data
-        return "OK"
+        return JSON.stringify({ id: "req-1", ok: true, result: {} })
       })
 
       const logger = createTestLogger()
@@ -258,9 +258,15 @@ describe("SocketCmuxClient", () => {
         body: "All tests passed",
       })
 
-      expect(receivedData).toBe(
-        `notify_target ${workspaceID} surface-456 "Build Done|opencode|All tests passed"\n`,
-      )
+      const parsed = JSON.parse(receivedData.trim())
+      expect(parsed.method).toBe("notification.create")
+      expect(parsed.params).toEqual({
+        title: "Build Done",
+        subtitle: "opencode",
+        body: "All tests passed",
+        workspace_id: workspaceID,
+        surface_id: "surface-456",
+      })
     })
 
     test("includes workspace_id in JSON-RPC params when client has workspaceID", async () => {
@@ -371,6 +377,32 @@ describe("SocketCmuxClient", () => {
 
       expect(receivedData).toBe(
         `set_status build compiling --icon=hammer --color=#ff9500 --tab=${workspaceID}\n`,
+      )
+    })
+
+    test("uses tabID for sidebar text commands when provided", async () => {
+      let receivedData = ""
+      const ts = await createTestServer((data) => {
+        receivedData = data
+        return "OK"
+      })
+
+      const logger = createTestLogger()
+      const client = new SocketCmuxClient({
+        socketPath: ts.socketPath,
+        workspaceID,
+        tabID: "tab-456",
+        logger,
+      })
+
+      await client.setStatus("build", {
+        text: "compiling",
+        icon: "hammer",
+        color: "#ff9500",
+      })
+
+      expect(receivedData).toBe(
+        "set_status build compiling --icon=hammer --color=#ff9500 --tab=tab-456\n",
       )
     })
   })

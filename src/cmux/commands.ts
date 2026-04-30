@@ -91,6 +91,10 @@ export function buildLogCommand(
   return withWorkspace([...args, "--", payload.message], workspaceID)
 }
 
+export function buildClearLogCommand(workspaceID?: string): string[] {
+  return withWorkspace(["clear-log"], workspaceID)
+}
+
 // ---------------------------------------------------------------------------
 // Socket command builders (text format — sidebar metadata commands)
 // ---------------------------------------------------------------------------
@@ -164,6 +168,10 @@ export function buildSocketLog(
   if (workspaceID) command += ` --tab=${workspaceID}`
   command += ` -- ${quote(payload.message)}`
   return `${command}\n`
+}
+
+export function buildSocketClearLog(workspaceID?: string): string {
+  return withTab("clear_log", workspaceID)
 }
 
 // ---------------------------------------------------------------------------

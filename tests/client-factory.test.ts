@@ -19,6 +19,7 @@ function makeEnvironment(overrides: Partial<CmuxEnvironment> = {}): CmuxEnvironm
     isManagedWorkspace: true,
     hasSocket: false,
     workspaceID: "C741C8F0-DD75-4BF2-83BF-2CC032234753",
+    tabID: "tab-123",
     surfaceID: "surface-456",
     ...overrides,
   }
@@ -117,6 +118,7 @@ describe("createCmuxClient", () => {
       transport: "cli",
     })
     expect(cliClient.workspaceID).toBe(wsID)
+    expect(cliClient.tabID).toBe("tab-123")
     expect(cliClient.surfaceID).toBe("surface-456")
 
     const socketClient = createCmuxClient({
@@ -126,6 +128,7 @@ describe("createCmuxClient", () => {
       transport: "socket",
     })
     expect(socketClient.workspaceID).toBe(wsID)
+    expect(socketClient.tabID).toBe("tab-123")
     expect(socketClient.surfaceID).toBe("surface-456")
   })
 

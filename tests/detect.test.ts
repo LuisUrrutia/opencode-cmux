@@ -70,15 +70,17 @@ describe("detectCmuxEnvironment", () => {
     expect(result.socketPath).toBe("/run/user/1000/cmux.sock")
   })
 
-  test("reads CMUX_SURFACE_ID and TERM_PROGRAM", () => {
+  test("reads CMUX_TAB_ID, CMUX_SURFACE_ID, and TERM_PROGRAM", () => {
     const env = {
       CMUX_WORKSPACE_ID: "workspace:1",
+      CMUX_TAB_ID: "tab:abc",
       CMUX_SURFACE_ID: "surface:abc",
       TERM_PROGRAM: "cmux",
     } as NodeJS.ProcessEnv
 
     const result = detectCmuxEnvironment(env)
 
+    expect(result.tabID).toBe("tab:abc")
     expect(result.surfaceID).toBe("surface:abc")
     expect(result.termProgram).toBe("cmux")
   })

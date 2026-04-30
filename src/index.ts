@@ -59,6 +59,13 @@ const plugin: Plugin = async (ctx) => {
   await coordinator.initialize()
   await coordinator.syncGitState()
 
+  let cleanupStarted = false
+  process.once("beforeExit", () => {
+    if (cleanupStarted) return
+    cleanupStarted = true
+    void coordinator.cleanup()
+  })
+
   /** Best-effort error logging — never throws. */
   function logHookError(hook: string, err: unknown): void {
     try {
@@ -111,6 +118,10 @@ const plugin: Plugin = async (ctx) => {
 
           case "session.created":
             await coordinator.handleSessionCreated(normalized.sessionID)
+            return
+
+          case "session.updated":
+            await coordinator.handleSessionUpdated(normalized.sessionID)
             return
 
           case "session.deleted":

@@ -97,7 +97,27 @@ export class CmuxStateCoordinator {
   public constructor(private readonly options: CoordinatorOptions) {}
 
   public async initialize(): Promise<void> {
-    await this.clearNotificationsBestEffort()
+    await this.clearPresentationBestEffort()
+  }
+
+  public async cleanup(): Promise<void> {
+    await this.flush()
+    this.primaryState = undefined
+    this.pendingQuestion = undefined
+    this.pendingPermission = undefined
+    this.activeTools.clear()
+    this.todoState = undefined
+    this.progressTracker.reset()
+    if (this.staleTimer) {
+      clearTimeout(this.staleTimer)
+      this.staleTimer = undefined
+    }
+    if (this.doneTimer) {
+      clearTimeout(this.doneTimer)
+      this.doneTimer = undefined
+    }
+    await this.clearPresentationBestEffort()
+    this.currentSnapshot = {}
   }
 
   /** Call this from every public handler to keep the watchdog alive. */
@@ -128,7 +148,7 @@ export class CmuxStateCoordinator {
 
   public async handleSessionError(sessionID?: string): Promise<void> {
     this.touchEventTimestamp()
-    const metadata = await this.resolveSession(sessionID ?? "unknown-session")
+    const metadata = await this.resolveSession(sessionID ?? "unknown-session", true)
     if (!metadata) return
 
     this.setSessionActivity(metadata, "error")
@@ -317,9 +337,14 @@ export class CmuxStateCoordinator {
 
   public async handleSessionCreated(sessionID: string): Promise<void> {
     this.touchEventTimestamp()
-    await this.clearNotificationsBestEffort()
     // Eagerly resolve and cache session metadata so subsequent events are faster
-    const metadata = await this.resolveSession(sessionID)
+    const metadata = await this.resolveSession(sessionID, true)
+    if (metadata?.kind === "primary") {
+      await this.clearPresentationBestEffort()
+      this.currentSnapshot = {}
+    } else {
+      await this.clearNotificationsBestEffort()
+    }
 
     if (this.options.config.logSessionLifecycle) {
       const label = metadata ? formatSessionLabel(metadata) : sessionID
@@ -331,14 +356,42 @@ export class CmuxStateCoordinator {
     }
   }
 
+  public async handleSessionUpdated(sessionID: string): Promise<void> {
+    this.touchEventTimestamp()
+    const metadata = await this.resolveSession(sessionID, true)
+    if (!metadata) return
+
+    const existing = this.sessions.get(sessionID)
+    if (existing) {
+      this.setSessionActivity(metadata, existing.activity)
+      if (metadata.kind === "primary") {
+        this.primaryState = this.sessions.get(sessionID)
+        if (existing.activity === "busy" && this.options.config.logSessionLifecycle) {
+          await this.clearLogBestEffort()
+          await this.throttledLog({
+            level: "progress",
+            source: "opencode",
+            message: `${this.options.project.label}: working on ${formatSessionLabel(metadata)}`,
+          })
+        }
+      }
+      await this.render()
+    }
+  }
+
   public async handleSessionDeleted(sessionID: string): Promise<void> {
     this.touchEventTimestamp()
     const existing = this.sessions.get(sessionID)
+    const metadata = await this.resolveSession(sessionID, true) ?? existing?.metadata
     this.sessions.delete(sessionID)
 
     // If the deleted session was the primary, clear primary state
-    if (existing?.metadata.kind === "primary") {
+    if (metadata?.kind === "primary") {
       this.primaryState = undefined
+      this.pendingQuestion = undefined
+      this.pendingPermission = undefined
+      this.activeTools.clear()
+      this.todoState = undefined
       this.progressTracker.reset()
       if (this.doneTimer) {
         clearTimeout(this.doneTimer)
@@ -347,8 +400,8 @@ export class CmuxStateCoordinator {
     }
 
     if (this.options.config.logSessionLifecycle) {
-      const label = existing
-        ? formatSessionLabel(existing.metadata)
+      const label = metadata
+        ? formatSessionLabel(metadata)
         : sessionID
       await this.throttledLog({
         level: "info",
@@ -357,13 +410,18 @@ export class CmuxStateCoordinator {
       })
     }
 
+    if (metadata?.kind === "primary") {
+      await this.cleanup()
+      return
+    }
+
     await this.render()
   }
 
   public async handleSessionCompacted(sessionID: string): Promise<void> {
     this.touchEventTimestamp()
     if (this.options.config.logSessionLifecycle) {
-      const metadata = await this.resolveSession(sessionID)
+      const metadata = await this.resolveSession(sessionID, true)
       const label = metadata ? formatSessionLabel(metadata) : sessionID
       await this.throttledLog({
         level: "info",
@@ -404,7 +462,7 @@ export class CmuxStateCoordinator {
   }
 
   private async markBusy(sessionID: string): Promise<void> {
-    const metadata = await this.resolveSession(sessionID)
+    const metadata = await this.resolveSession(sessionID, true)
     if (!metadata) return
 
     const previous = this.sessions.get(sessionID)
@@ -437,7 +495,7 @@ export class CmuxStateCoordinator {
   }
 
   private async markIdle(sessionID: string): Promise<void> {
-    const metadata = await this.resolveSession(sessionID)
+    const metadata = await this.resolveSession(sessionID, true)
     if (!metadata) return
 
     const previous = this.sessions.get(sessionID)
@@ -483,8 +541,11 @@ export class CmuxStateCoordinator {
     this.resetDoneTimer()
   }
 
-  private async resolveSession(sessionID: string): Promise<SessionMetadata | null> {
-    return this.options.sessionResolver.getSessionMetadata(sessionID)
+  private async resolveSession(
+    sessionID: string,
+    fresh = false,
+  ): Promise<SessionMetadata | null> {
+    return this.options.sessionResolver.getSessionMetadata(sessionID, { fresh })
   }
 
   private async clearNotificationsBestEffort(): Promise<void> {
@@ -493,6 +554,23 @@ export class CmuxStateCoordinator {
     } catch {
       // Best effort only.
     }
+  }
+
+  private async clearLogBestEffort(): Promise<void> {
+    try {
+      await this.options.cmux.clearLog()
+    } catch {
+      // Best effort only.
+    }
+  }
+
+  private async clearPresentationBestEffort(): Promise<void> {
+    await Promise.allSettled([
+      this.options.cmux.clearNotifications(),
+      this.options.cmux.clearStatus(this.options.config.statusKey),
+      this.options.cmux.clearProgress(),
+      this.options.cmux.clearLog(),
+    ])
   }
 
   private async refreshGitStateIfNeeded(
@@ -804,15 +882,7 @@ export class CmuxStateCoordinator {
    * exists primarily for deterministic cleanup in tests.
    */
   public async dispose(): Promise<void> {
-    await this.flush()
-    if (this.staleTimer) {
-      clearTimeout(this.staleTimer)
-      this.staleTimer = undefined
-    }
-    if (this.doneTimer) {
-      clearTimeout(this.doneTimer)
-      this.doneTimer = undefined
-    }
+    await this.cleanup()
   }
 
   private async applyStatus(next: PresentationSnapshot): Promise<void> {

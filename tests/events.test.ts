@@ -224,6 +224,28 @@ describe("normalizeEvent", () => {
     ).toBeNull()
   })
 
+  test("normalizes session.updated", () => {
+    const result = normalizeEvent({
+      type: "session.updated",
+      properties: { sessionID: "abc" },
+    })
+    expect(result).toEqual({ type: "session.updated", sessionID: "abc" })
+  })
+
+  test("normalizes session.updated with nested session id", () => {
+    const result = normalizeEvent({
+      type: "session.updated",
+      properties: { session: { id: "abc" } },
+    })
+    expect(result).toEqual({ type: "session.updated", sessionID: "abc" })
+  })
+
+  test("returns null for session.updated without sessionID", () => {
+    expect(
+      normalizeEvent({ type: "session.updated", properties: {} }),
+    ).toBeNull()
+  })
+
   test("normalizes session.deleted", () => {
     const result = normalizeEvent({
       type: "session.deleted",
