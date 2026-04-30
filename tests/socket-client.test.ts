@@ -260,6 +260,18 @@ describe("SocketCmuxClient", () => {
     expect(client.available).toBe(true)
   })
 
+  test("marks tab targeting imprecise when falling back to workspace ID", () => {
+    const logger = createTestLogger()
+    const client = new SocketCmuxClient({
+      socketPath: "/tmp/fake.sock",
+      workspaceID,
+      logger,
+    })
+
+    expect(client.tabID).toBe(workspaceID)
+    expect(client.preciseTabTargeting).toBe(false)
+  })
+
   describe("clearNotifications and reportGitBranch", () => {
     test("sends notification clear JSON and git text commands to the socket", async () => {
       let received = ""
@@ -480,6 +492,7 @@ describe("SocketCmuxClient", () => {
           "set_status build compiling --icon=hammer --color=#ff9500 --tab=tab-456\n",
         )
       })
+      expect(client.preciseTabTargeting).toBe(true)
     })
   })
 

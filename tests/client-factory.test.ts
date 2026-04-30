@@ -37,6 +37,24 @@ describe("createCmuxClient", () => {
       })
 
       expect(client.transport).toBe("socket")
+      expect(client.preciseTabTargeting).toBe(true)
+    })
+
+    test("warns when socket is used without CMUX_TAB_ID", () => {
+      const logger = makeLogger()
+      const client = createCmuxClient({
+        binary: "cmux",
+        environment: makeEnvironment({ hasSocket: true, tabID: undefined }),
+        logger,
+        transport: "socket",
+      })
+
+      expect(client.transport).toBe("socket")
+      expect(client.tabID).toBe("C741C8F0-DD75-4BF2-83BF-2CC032234753")
+      expect(client.preciseTabTargeting).toBe(false)
+      expect(logger.messages).toHaveLength(1)
+      expect(logger.messages[0].level).toBe("warn")
+      expect(logger.messages[0].message).toContain("CMUX_TAB_ID missing")
     })
 
     test("selects cli when hasSocket is false", () => {
@@ -120,6 +138,7 @@ describe("createCmuxClient", () => {
     expect(cliClient.workspaceID).toBe(wsID)
     expect(cliClient.tabID).toBe("tab-123")
     expect(cliClient.surfaceID).toBe("surface-456")
+    expect(cliClient.preciseTabTargeting).toBe(false)
 
     const socketClient = createCmuxClient({
       binary: "cmux",
@@ -130,6 +149,7 @@ describe("createCmuxClient", () => {
     expect(socketClient.workspaceID).toBe(wsID)
     expect(socketClient.tabID).toBe("tab-123")
     expect(socketClient.surfaceID).toBe("surface-456")
+    expect(socketClient.preciseTabTargeting).toBe(true)
   })
 
   test("marks client as available when in managed workspace", () => {

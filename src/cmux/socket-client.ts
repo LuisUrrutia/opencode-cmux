@@ -200,6 +200,7 @@ interface SocketCmuxClientOptions {
   workspaceID?: string
   tabID?: string
   surfaceID?: string
+  preciseTabTargeting?: boolean
   logger: PluginLogger
   timeoutMs?: number
 }
@@ -209,6 +210,7 @@ const DEFAULT_TIMEOUT_MS = 750
 export class SocketCmuxClient implements CmuxClient {
   public readonly available: boolean
   public readonly transport = "socket" as const
+  public readonly preciseTabTargeting: boolean
   public readonly workspaceID?: string
   public readonly tabID?: string
   public readonly surfaceID?: string
@@ -226,6 +228,7 @@ export class SocketCmuxClient implements CmuxClient {
     this.workspaceID = options.workspaceID
     this.tabID = options.tabID ?? options.workspaceID
     this.surfaceID = options.surfaceID
+    this.preciseTabTargeting = options.preciseTabTargeting ?? options.tabID !== undefined
     this.logger = options.logger
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
     this.available = true

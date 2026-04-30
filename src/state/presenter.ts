@@ -579,6 +579,8 @@ export class CmuxStateCoordinator {
   }
 
   private async clearPresentationOnStartupBestEffort(): Promise<void> {
+    if (!this.canClearPresentationSafely()) return
+
     const clearIfSafe = async (clear: () => Promise<void>): Promise<void> => {
       if (this.hasLivePresentationState()) {
         return
@@ -597,6 +599,8 @@ export class CmuxStateCoordinator {
   }
 
   private async clearPresentationBestEffort(): Promise<void> {
+    if (!this.canClearPresentationSafely()) return
+
     if (this.options.cmux.transport === "socket") {
       await this.clearNotificationsBestEffort()
       await this.clearStatusBestEffort()
@@ -611,6 +615,10 @@ export class CmuxStateCoordinator {
       this.options.cmux.clearProgress(),
       this.options.cmux.clearLog(),
     ])
+  }
+
+  private canClearPresentationSafely(): boolean {
+    return this.options.cmux.preciseTabTargeting
   }
 
   private async clearStatusBestEffort(): Promise<void> {

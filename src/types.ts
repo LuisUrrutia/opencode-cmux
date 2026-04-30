@@ -116,6 +116,7 @@ export interface SidebarLogPayload {
 export interface CmuxClient {
   readonly available: boolean
   readonly transport: "cli" | "socket"
+  readonly preciseTabTargeting: boolean
   readonly workspaceID?: string
   readonly tabID?: string
   readonly surfaceID?: string

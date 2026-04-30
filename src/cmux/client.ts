@@ -62,6 +62,7 @@ function runCommand(binary: string, args: string[]): Promise<CommandResult> {
 class CliCmuxClient implements CmuxClient {
   public readonly available: boolean
   public readonly transport = "cli" as const
+  public readonly preciseTabTargeting = false
   public readonly workspaceID?: string
   public readonly tabID?: string
   public readonly surfaceID?: string
@@ -199,11 +200,20 @@ export function createCmuxClient(options: CreateCmuxClientOptions): CmuxClient {
   )
 
   if (useSocket) {
+    if (!options.environment.tabID) {
+      void options.logger.log(
+        "warn",
+        "CMUX_TAB_ID missing; sidebar updates may affect other tabs in this workspace",
+        { workspaceID: options.environment.workspaceID },
+      )
+    }
+
     return new SocketCmuxClient({
       socketPath: options.environment.socketPath,
       workspaceID: options.environment.workspaceID,
       tabID: options.environment.tabID ?? options.environment.workspaceID,
       surfaceID: options.environment.surfaceID,
+      preciseTabTargeting: options.environment.tabID !== undefined,
       logger: options.logger,
     })
   }

@@ -37,11 +37,26 @@ export type FakeCall =
 
 export class FakeCmuxClient implements CmuxClient {
   public readonly available = true
-  public readonly transport = "cli" as const
-  public readonly workspaceID = "workspace:1"
-  public readonly tabID = "tab:1"
-  public readonly surfaceID = "surface:1"
+  public readonly transport: "cli" | "socket"
+  public readonly preciseTabTargeting: boolean
+  public readonly workspaceID?: string
+  public readonly tabID?: string
+  public readonly surfaceID?: string
   public readonly calls: FakeCall[] = []
+
+  public constructor(options: {
+    transport?: "cli" | "socket"
+    preciseTabTargeting?: boolean
+    workspaceID?: string
+    tabID?: string
+    surfaceID?: string
+  } = {}) {
+    this.transport = options.transport ?? "cli"
+    this.preciseTabTargeting = options.preciseTabTargeting ?? true
+    this.workspaceID = options.workspaceID ?? "workspace:1"
+    this.tabID = options.tabID ?? "tab:1"
+    this.surfaceID = options.surfaceID ?? "surface:1"
+  }
 
   public async clearNotifications(): Promise<void> {
     this.calls.push({ type: "clearNotifications" })

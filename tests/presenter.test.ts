@@ -26,6 +26,15 @@ describe("CmuxStateCoordinator", () => {
     ])
   })
 
+  test("initialize skips stale cleanup without precise tab targeting", async () => {
+    const cmux = new FakeCmuxClient({ preciseTabTargeting: false })
+    const { coordinator } = createCoordinator({}, { cmux })
+
+    await coordinator.initialize()
+
+    expect(cmux.calls).toEqual([])
+  })
+
   test("late startup cleanup does not clear live progress", async () => {
     const { coordinator, cmux } = createCoordinator({
       primary: {
@@ -76,6 +85,24 @@ describe("CmuxStateCoordinator", () => {
     expect(cmux.calls).toContainEqual({ type: "clearStatus", key: "opencode" })
     expect(cmux.calls).toContainEqual({ type: "clearProgress" })
     expect(cmux.calls).toContainEqual({ type: "clearLog" })
+  })
+
+  test("does not clear stale presentation on session start without precise tab targeting", async () => {
+    const cmux = new FakeCmuxClient({ preciseTabTargeting: false })
+    const { coordinator } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    }, { cmux })
+
+    await coordinator.handleSessionCreated("primary")
+
+    expect(cmux.calls).not.toContainEqual({ type: "clearNotifications" })
+    expect(cmux.calls).not.toContainEqual({ type: "clearStatus", key: "opencode" })
+    expect(cmux.calls).not.toContainEqual({ type: "clearProgress" })
+    expect(cmux.calls).not.toContainEqual({ type: "clearLog" })
   })
 
   test("cleans cmux presentation when a primary session is deleted", async () => {
