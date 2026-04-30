@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "@attamusc/opencode-cmux",
+  "name": "@luisurrutia/opencode-cmux",
   "version": "0.3.0",
   "description": "OpenCode plugin that surfaces project and agent activity in cmux",
   "type": "module",
@@ -27,16 +27,16 @@
     "cmux",
     "ghostty"
   ],
-  "author": "Attamusc",
+  "author": "LuisUrrutia",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Attamusc/opencode-cmux.git"
+    "url": "git+https://github.com/LuisUrrutia/opencode-cmux.git"
   },
   "bugs": {
-    "url": "https://github.com/Attamusc/opencode-cmux/issues"
+    "url": "https://github.com/LuisUrrutia/opencode-cmux/issues"
   },
-  "homepage": "https://github.com/Attamusc/opencode-cmux#readme",
+  "homepage": "https://github.com/LuisUrrutia/opencode-cmux#readme",
   "engines": {
     "bun": ">=1.3.4"
   }

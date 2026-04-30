@@ -42,6 +42,12 @@ interface SocketError {
 
 type SocketOutcome = SocketResult | SocketError
 
+interface SocketWriteOptions {
+  socketPath: string
+  payload: string
+  timeoutMs: number
+}
+
 /**
  * Send a single request over a Unix socket and return the response.
  *
@@ -117,6 +123,71 @@ export function socketRequest(
       settle({
         error: { code, message: err.message },
       })
+    })
+  })
+}
+
+/**
+ * Send a text-protocol command and resolve once the payload has been written.
+ * cmux sidebar text commands are fire-and-forget in practice: the app may keep
+ * the socket open without sending a response, so waiting for end/close causes
+ * false timeouts even though the command was accepted.
+ */
+export function socketWrite(options: SocketWriteOptions): Promise<SocketOutcome> {
+  return new Promise((resolve) => {
+    let settled = false
+
+    const settle = (outcome: SocketOutcome) => {
+      if (settled) return
+      settled = true
+      resolve(outcome)
+    }
+
+    let socket: ReturnType<typeof connect>
+    try {
+      socket = connect({ path: options.socketPath })
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      const code =
+        typeof err === "object" && err !== null && "code" in err
+          ? String((err as { code: unknown }).code)
+          : "UNKNOWN"
+      settle({ error: { code, message: error.message } })
+      return
+    }
+
+    socket.setTimeout(options.timeoutMs)
+
+    socket.on("connect", () => {
+      socket.write(options.payload, (err) => {
+        if (err) {
+          socket.destroy()
+          settle({ error: { code: "EWRITE", message: err.message } })
+          return
+        }
+
+        socket.destroy()
+        settle({ response: "" })
+      })
+    })
+
+    socket.on("timeout", () => {
+      socket.destroy()
+      settle({
+        error: {
+          code: "ETIMEDOUT",
+          message: `Socket write timed out after ${options.timeoutMs}ms`,
+        },
+      })
+    })
+
+    socket.on("error", (err) => {
+      const code =
+        typeof err === "object" && err !== null && "code" in err
+          ? String((err as { code: unknown }).code)
+          : "UNKNOWN"
+      socket.destroy()
+      settle({ error: { code, message: err.message } })
     })
   })
 }
@@ -254,7 +325,7 @@ export class SocketCmuxClient implements CmuxClient {
   private async sendText(payload: string, label: string): Promise<void> {
     if (this.connectionDisabled) return
 
-    const outcome = await socketRequest({
+    const outcome = await socketWrite({
       socketPath: this.socketPath,
       payload,
       timeoutMs: this.timeoutMs,
@@ -276,8 +347,7 @@ export class SocketCmuxClient implements CmuxClient {
   ): void {
     const isConnectionFailure =
       error.code === "ECONNREFUSED" ||
-      error.code === "ENOENT" ||
-      error.code === "ETIMEDOUT"
+      error.code === "ENOENT"
 
     if (isConnectionFailure) {
       this.connectionDisabled = true

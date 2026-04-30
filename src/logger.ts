@@ -1,5 +1,7 @@
 import type { PluginClient, PluginLogger } from "./types.js"
 
+const SERVICE = "opencode-cmux"
+
 export function createPluginLogger(client: PluginClient): PluginLogger {
   return {
     async log(level, message, extra) {
@@ -8,7 +10,7 @@ export function createPluginLogger(client: PluginClient): PluginLogger {
       try {
         await client.app.log({
           body: {
-            service: "opencode-cmux",
+            service: SERVICE,
             level,
             message,
             extra,

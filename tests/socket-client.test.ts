@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { unlinkSync } from "node:fs"
-import { SocketCmuxClient, socketRequest } from "../src/cmux/socket-client.ts"
+import { SocketCmuxClient, socketRequest, socketWrite } from "../src/cmux/socket-client.ts"
 import type { PluginLogger } from "../src/types.ts"
 
 // ---------------------------------------------------------------------------
@@ -40,7 +40,10 @@ function createTestServer(
       `cmux-test-${Date.now()}-${Math.random().toString(36).slice(2)}.sock`,
     )
 
+    const sockets = new Set<Parameters<Parameters<typeof createServer>[0]>[0]>()
     const server = createServer((socket) => {
+      sockets.add(socket)
+      socket.on("close", () => sockets.delete(socket))
       socket.on("data", (chunk) => {
         const response = handler(chunk.toString())
         socket.end(response)
@@ -54,6 +57,7 @@ function createTestServer(
         socketPath,
         close: () =>
           new Promise<void>((res) => {
+            for (const socket of sockets) socket.destroy()
             server.close(() => {
               try {
                 unlinkSync(socketPath)
@@ -66,6 +70,24 @@ function createTestServer(
       resolve(ts)
     })
   })
+}
+
+async function waitFor(assertion: () => void): Promise<void> {
+  const deadline = Date.now() + 500
+  let lastError: unknown
+
+  while (Date.now() < deadline) {
+    try {
+      assertion()
+      return
+    } catch (error) {
+      lastError = error
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
+
+  if (lastError) throw lastError
+  assertion()
 }
 
 function createTestLogger(): PluginLogger & {
@@ -162,6 +184,57 @@ describe("socketRequest", () => {
   })
 })
 
+describe("socketWrite", () => {
+  test("resolves after writing without waiting for a response", async () => {
+    let resolveReceived!: () => void
+    const receivedPromise = new Promise<void>((resolve) => {
+      resolveReceived = resolve
+    })
+    let received = ""
+    const socketPath = join(
+      tmpdir(),
+      `cmux-test-write-${Date.now()}.sock`,
+    )
+    const server = createServer((socket) => {
+      socket.on("data", (chunk) => {
+        received += chunk.toString()
+        resolveReceived()
+        socket.destroy()
+      })
+    })
+
+    await new Promise<void>((resolve, reject) => {
+      server.on("error", reject)
+      server.listen(socketPath, resolve)
+    })
+
+    const ts: TestServer = {
+      server,
+      socketPath,
+      close: () =>
+        new Promise<void>((res) => {
+          server.close(() => {
+            try { unlinkSync(socketPath) } catch {}
+            res()
+          })
+        }),
+    }
+    testServers.push(ts)
+
+    const startedAt = Date.now()
+    const outcome = await socketWrite({
+      socketPath,
+      payload: "clear_notifications --tab=workspace\n",
+      timeoutMs: 1000,
+    })
+
+    expect(outcome.error).toBeUndefined()
+    expect(Date.now() - startedAt).toBeLessThan(500)
+    await receivedPromise
+    expect(received).toBe("clear_notifications --tab=workspace\n")
+  })
+})
+
 // ---------------------------------------------------------------------------
 // SocketCmuxClient
 // ---------------------------------------------------------------------------
@@ -203,13 +276,17 @@ describe("SocketCmuxClient", () => {
       })
 
       await client.clearNotifications()
-      expect(received.trim()).toBe(`clear_notifications --tab=${workspaceID}`)
+      await waitFor(() => {
+        expect(received.trim()).toBe(`clear_notifications --tab=${workspaceID}`)
+      })
 
       received = ""
       await client.reportGitBranch("main", true)
-      expect(received.trim()).toBe(
-        `report_git_branch main --status=dirty --tab=${workspaceID}`,
-      )
+      await waitFor(() => {
+        expect(received.trim()).toBe(
+          `report_git_branch main --status=dirty --tab=${workspaceID}`,
+        )
+      })
     })
   })
 
@@ -375,9 +452,11 @@ describe("SocketCmuxClient", () => {
         color: "#ff9500",
       })
 
-      expect(receivedData).toBe(
-        `set_status build compiling --icon=hammer --color=#ff9500 --tab=${workspaceID}\n`,
-      )
+      await waitFor(() => {
+        expect(receivedData).toBe(
+          `set_status build compiling --icon=hammer --color=#ff9500 --tab=${workspaceID}\n`,
+        )
+      })
     })
 
     test("uses tabID for sidebar text commands when provided", async () => {
@@ -401,9 +480,11 @@ describe("SocketCmuxClient", () => {
         color: "#ff9500",
       })
 
-      expect(receivedData).toBe(
-        "set_status build compiling --icon=hammer --color=#ff9500 --tab=tab-456\n",
-      )
+      await waitFor(() => {
+        expect(receivedData).toBe(
+          "set_status build compiling --icon=hammer --color=#ff9500 --tab=tab-456\n",
+        )
+      })
     })
   })
 
@@ -424,9 +505,11 @@ describe("SocketCmuxClient", () => {
 
       await client.setProgress({ value: 0.75, label: "Building..." })
 
-      expect(receivedData).toBe(
-        `set_progress 0.75 --label=Building... --tab=${workspaceID}\n`,
-      )
+      await waitFor(() => {
+        expect(receivedData).toBe(
+          `set_progress 0.75 --label=Building... --tab=${workspaceID}\n`,
+        )
+      })
     })
   })
 
@@ -451,9 +534,11 @@ describe("SocketCmuxClient", () => {
         message: "Compilation failed",
       })
 
-      expect(receivedData).toBe(
-        `log --level=error --source=build --tab=${workspaceID} -- "Compilation failed"\n`,
-      )
+      await waitFor(() => {
+        expect(receivedData).toBe(
+          `log --level=error --source=build --tab=${workspaceID} -- "Compilation failed"\n`,
+        )
+      })
     })
   })
 
@@ -474,9 +559,11 @@ describe("SocketCmuxClient", () => {
 
       await client.clearStatus("build")
 
-      expect(receivedData).toBe(
-        `clear_status build --tab=${workspaceID}\n`,
-      )
+      await waitFor(() => {
+        expect(receivedData).toBe(
+          `clear_status build --tab=${workspaceID}\n`,
+        )
+      })
     })
   })
 
@@ -497,9 +584,11 @@ describe("SocketCmuxClient", () => {
 
       await client.clearProgress()
 
-      expect(receivedData).toBe(
-        `clear_progress --tab=${workspaceID}\n`,
-      )
+      await waitFor(() => {
+        expect(receivedData).toBe(
+          `clear_progress --tab=${workspaceID}\n`,
+        )
+      })
     })
   })
 
@@ -543,7 +632,10 @@ describe("SocketCmuxClient", () => {
         tmpdir(),
         `cmux-test-hang-${Date.now()}.sock`,
       )
-      const server = createServer((_socket) => {
+      const sockets = new Set<Parameters<Parameters<typeof createServer>[0]>[0]>()
+      const server = createServer((socket) => {
+        sockets.add(socket)
+        socket.on("close", () => sockets.delete(socket))
         // Hold connection open
       })
 
@@ -557,6 +649,7 @@ describe("SocketCmuxClient", () => {
         socketPath,
         close: () =>
           new Promise<void>((res) => {
+            for (const socket of sockets) socket.destroy()
             server.close(() => {
               try { unlinkSync(socketPath) } catch {}
               res()
@@ -573,15 +666,68 @@ describe("SocketCmuxClient", () => {
       })
 
       // Should not throw
-      await client.setStatus("test", {
-        text: "hello",
-        icon: "star",
-        color: "#fff",
-      })
+      await client.notify({ title: "hello" })
 
       const errorCalls = logger.calls.filter((c) => c.level === "error")
       expect(errorCalls.length).toBeGreaterThanOrEqual(1)
       expect(errorCalls[0].extra?.code).toBe("ETIMEDOUT")
+    })
+
+    test("does not disable text commands after a response timeout", async () => {
+      const socketPath = join(
+        tmpdir(),
+        `cmux-test-retry-${Date.now()}.sock`,
+      )
+      let requestCount = 0
+      const received: string[] = []
+      const sockets = new Set<Parameters<Parameters<typeof createServer>[0]>[0]>()
+      const server = createServer((socket) => {
+        sockets.add(socket)
+        socket.on("close", () => sockets.delete(socket))
+        socket.on("data", (chunk) => {
+          requestCount += 1
+          received.push(chunk.toString())
+          if (requestCount > 1) socket.end("OK")
+        })
+      })
+
+      await new Promise<void>((resolve, reject) => {
+        server.on("error", reject)
+        server.listen(socketPath, resolve)
+      })
+
+      const ts: TestServer = {
+        server,
+        socketPath,
+        close: () =>
+          new Promise<void>((res) => {
+            for (const socket of sockets) socket.destroy()
+            server.close(() => {
+              try { unlinkSync(socketPath) } catch {}
+              res()
+            })
+          }),
+      }
+      testServers.push(ts)
+
+      const logger = createTestLogger()
+      const client = new SocketCmuxClient({
+        socketPath,
+        logger,
+        timeoutMs: 100,
+      })
+
+      await client.notify({ title: "will timeout" })
+      await client.setStatus("test", {
+        text: "working",
+        icon: "terminal",
+        color: "#fff",
+      })
+
+      await waitFor(() => {
+        expect(received).toHaveLength(2)
+        expect(received[1]).toContain("set_status test working")
+      })
     })
   })
 })

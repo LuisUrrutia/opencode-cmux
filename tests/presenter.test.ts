@@ -26,6 +26,24 @@ describe("CmuxStateCoordinator", () => {
     ])
   })
 
+  test("late startup cleanup does not clear live progress", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.flush()
+    cmux.reset()
+
+    await coordinator.initialize()
+
+    expect(cmux.calls).toEqual([])
+  })
+
   test("clears notifications when a tool starts", async () => {
     const { coordinator, cmux } = createCoordinator({
       primary: {
@@ -100,6 +118,16 @@ describe("CmuxStateCoordinator", () => {
     })
 
     await coordinator.handleSessionUpdated("primary")
+    await coordinator.flush()
+
+    expect(cmux.calls).toContainEqual({
+      type: "setProgress",
+      payload: {
+        value: expect.any(Number),
+        label: "demo: Renamed title",
+      },
+    })
+
     await coordinator.handleSessionStatus("primary", "idle")
     await coordinator.flush()
 

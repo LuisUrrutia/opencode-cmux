@@ -1,6 +1,6 @@
 # opencode-cmux
 
-`@attamusc/opencode-cmux` is an OpenCode plugin that turns OpenCode activity into richer `cmux` sidebar feedback for the **current cmux workspace**. It tracks primary-agent vs subagent work, surfaces questions and permission waits, and keeps project context in notifications, logs, and progress updates.
+`@luisurrutia/opencode-cmux` is an OpenCode plugin that turns OpenCode activity into richer `cmux` sidebar feedback for the **current cmux workspace**. It tracks primary-agent vs subagent work, surfaces questions and permission waits, and keeps project context in notifications, logs, and progress updates.
 
 ## Features
 
@@ -30,7 +30,7 @@ Add the package name to your OpenCode config:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@attamusc/opencode-cmux"]
+  "plugin": ["@luisurrutia/opencode-cmux"]
 }
 ```
 

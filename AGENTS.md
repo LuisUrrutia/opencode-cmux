@@ -60,6 +60,13 @@ Key differences from CLI:
 - Socket sidebar commands use `--tab=<uuid>` not `--workspace <uuid>`
 - **Multi-word positional values must be quoted** (e.g. `"working: bash"`)
 - JSON-RPC responses use `{"ok":true}` not standard JSON-RPC 2.0 format
+- Socket text/sidebar commands are **fire-and-forget**. Resolve after the
+  payload is written; do **not** wait for a response or for the server to close
+  the connection. The macOS cmux socket can accept the connection and keep it
+  open for more than 5s after commands like `clear_notifications`, even though
+  the path is correct.
+- JSON-RPC notification commands are different: keep waiting for their response
+  and parse `ok:false` failures.
 
 The CLI transport is always safe for multi-word values because `spawn()`
 passes them as separate array elements. The socket text protocol is the one
@@ -67,6 +74,17 @@ that needs quoting.
 
 Command builders live in `src/cmux/commands.ts` — CLI builders return
 `string[]`, socket builders return `string`.
+
+Socket detection caveats:
+- `hasSocket: true` only means `statSync(socketPath).isSocket()` passed. It
+  does not prove cmux will answer a command.
+- A wrong or absent socket usually surfaces as `ENOENT` or `ECONNREFUSED`.
+  `ETIMEDOUT` means the request did not complete in time; do not permanently
+  disable socket transport on a single timeout.
+- Socket discovery tries explicit env vars first (`CMUX_SOCKET_PATH`, then
+  `CMUX_SOCKET`), then candidate locations. The macOS app socket path
+  `~/Library/Application Support/cmux/cmux.sock` is one expected candidate and
+  should be preferred when it exists, but it is not the only valid location.
 
 ## Constraints
 
@@ -79,6 +97,18 @@ Command builders live in `src/cmux/commands.ts` — CLI builders return
   socket/workspace, the plugin returns `{}` (no hooks) and does nothing.
 - **Render throttling** — `render()` coalesces rapid state changes to at
   most one cmux call per 200ms. Sidebar logs are rate-limited to 5/sec.
+- **Startup cleanup must be guarded** — `initialize()` runs lazily after plugin
+  construction. It must not clear presentation state once a busy session,
+  active tool, current status, or progress snapshot exists; otherwise it can
+  wipe a live cmux progress bar while the coordinator still thinks it is visible.
+- **Primary completion ordering matters** — on primary idle, render the final
+  `done` status and `1.0` progress before sending the completion notification.
+  Subagent idle/completion must not drive the primary session to `done` or
+  force main progress to `1.0`.
+- **Session rename/title updates** — OpenCode creates sessions with a generic
+  title, then later emits `session.updated` with the real prompt-derived title.
+  `handleSessionUpdated()` must refresh metadata with a fresh resolver lookup
+  and re-render the live progress label while the session is still busy.
 - **No shutdown hook** — OpenCode's plugin API has no `dispose`/`shutdown`
   lifecycle event. The coordinator's `dispose()` method exists for tests
   only. All timers are one-shot `setTimeout`s wrapped in try/catch, so

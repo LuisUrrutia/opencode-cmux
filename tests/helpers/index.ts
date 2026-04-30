@@ -141,9 +141,9 @@ export const defaultTestConfig = {
  */
 export function createCoordinator(
   sessions: Record<string, SessionMetadata>,
-  options: { root?: string; label?: string } = {},
+  options: { root?: string; label?: string; cmux?: FakeCmuxClient } = {},
 ) {
-  const cmux = new FakeCmuxClient()
+  const cmux = options.cmux ?? new FakeCmuxClient()
   const config = { ...defaultTestConfig }
   const sessionResolver = new FakeSessionResolver(sessions)
   const coordinator = new CmuxStateCoordinator({

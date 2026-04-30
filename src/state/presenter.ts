@@ -97,7 +97,7 @@ export class CmuxStateCoordinator {
   public constructor(private readonly options: CoordinatorOptions) {}
 
   public async initialize(): Promise<void> {
-    await this.clearPresentationBestEffort()
+    await this.clearPresentationOnStartupBestEffort()
   }
 
   public async cleanup(): Promise<void> {
@@ -565,6 +565,35 @@ export class CmuxStateCoordinator {
     } catch {
       // Best effort only.
     }
+  }
+
+  private hasLivePresentationState(): boolean {
+    return !!(
+      this.primaryState ||
+      this.pendingQuestion ||
+      this.pendingPermission ||
+      this.activeTools.size > 0 ||
+      this.currentSnapshot.status ||
+      this.currentSnapshot.progress
+    )
+  }
+
+  private async clearPresentationOnStartupBestEffort(): Promise<void> {
+    const clearIfSafe = async (clear: () => Promise<void>): Promise<void> => {
+      if (this.hasLivePresentationState()) {
+        return
+      }
+      try {
+        await clear()
+      } catch {
+        // Best effort only.
+      }
+    }
+
+    await clearIfSafe(() => this.options.cmux.clearNotifications())
+    await clearIfSafe(() => this.options.cmux.clearStatus(this.options.config.statusKey))
+    await clearIfSafe(() => this.options.cmux.clearProgress())
+    await clearIfSafe(() => this.options.cmux.clearLog())
   }
 
   private async clearPresentationBestEffort(): Promise<void> {
