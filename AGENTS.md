@@ -45,6 +45,80 @@ order or explicitly document a new one.**
 5. Add tests in `tests/presenter.test.ts` using the helpers from
    `tests/helpers/`
 
+## OpenCode Plugin Coding Contract
+
+OpenCode plugins are JavaScript or TypeScript modules exporting one or more
+plugin functions. Each function receives `{ project, client, $, directory,
+worktree }` and returns a hooks object. This repo exports one default `Plugin`
+from `src/index.ts`; keep that module shape stable for npm loading.
+
+There are two hook styles:
+- **Catch-all events**: `event: async ({ event }) => { ... }`. Route these
+  through `normalizeEvent()` in `src/events.ts`, then switch only on the
+  normalized union in `src/index.ts`. Unknown or malformed events should return
+  `null` and be ignored.
+- **Named hooks**: string keys in the returned hooks object, such as
+  `"permission.ask"`, `"tool.execute.before"`, `"tool.execute.after"`, and
+  `"shell.env"`. Named hooks receive `(input, output)` and usually mutate
+  `output` in place. Throwing from a hook can block host behavior, so this
+  plugin should only throw intentionally; normal handler failures must be caught.
+
+Important documented event families:
+- Command: `command.executed`
+- File: `file.edited`, `file.watcher.updated`
+- Installation: `installation.updated`
+- LSP: `lsp.client.diagnostics`, `lsp.updated`
+- Message: `message.part.removed`, `message.part.updated`, `message.removed`,
+  `message.updated`
+- Permission: `permission.asked`, `permission.replied`
+- Server: `server.connected`
+- Session: `session.created`, `session.compacted`, `session.deleted`,
+  `session.diff`, `session.error`, `session.idle`, `session.status`,
+  `session.updated`
+- Todo: `todo.updated`
+- Shell: `shell.env`
+- Tool: `tool.execute.before`, `tool.execute.after`
+- TUI: `tui.prompt.append`, `tui.command.execute`, `tui.toast.show`
+
+Coding rules for this repo:
+- Keep raw OpenCode shapes out of the presenter. Parse defensively in
+  `src/events.ts` using helper-style extraction (`asRecord`, `getString`,
+  `readSessionID`) and pass stable typed data into `CmuxStateCoordinator`.
+- Update `src/types.ts` when adding named hook input/output contracts. Avoid
+  `any`; host payloads are unstable, so prefer `unknown` plus guarded parsing.
+- Every hook body in `src/index.ts` must be wrapped in `try/catch` and use
+  `logHookError()`. Never let hook failures escape into the OpenCode host.
+- Timer callbacks must also catch or swallow failures. An unhandled rejection can
+  crash the plugin host process.
+- Use `client.app.log()` through `createPluginLogger()` for structured logs.
+  Avoid `console.log()` for runtime diagnostics.
+- If adding OpenCode custom tools later, use `tool()` from `@opencode-ai/plugin`
+  and remember plugin tools override built-ins on name collision.
+- Tests should document behavior in `tests/events.test.ts`,
+  `tests/plugin.test.ts`, and `tests/presenter.test.ts`; use helpers from
+  `tests/helpers/index.ts` for coordinator tests.
+
+## npm Release Work
+
+Distribution details are internal release concerns, not runtime behavior. For an
+npm release of `@luisurrutia/opencode-cmux`:
+- Published plugins must expose an importable JS module entry. Keep
+  `package.json` `main`/`exports` pointed at `dist/index.js`, and keep
+  `dist`, `README.md`, and `LICENSE` in `files`.
+- OpenCode installs npm plugins automatically with Bun at startup and caches
+  packages under `~/.cache/opencode/node_modules/`. Keep the package compatible
+  with Bun's ESM loading path.
+- Regular and scoped npm packages are supported. Runtime dependencies belong in
+  package metadata; local-plugin-only `.opencode/package.json` dependency advice
+  does not apply to the published package.
+- Before publishing, run `bun test`, `bun run build`, and ideally
+  `npm pack --dry-run` to verify the tarball contains the built entrypoint.
+- GitHub Actions for releases should validate test/build/pack on PRs and publish
+  only from tags or a manual release workflow using an npm token. Do not publish
+  from every push to `main`.
+- If a release workflow also tests consumption, install the packed tarball in a
+  scratch project and verify OpenCode can import the package name from config.
+
 ## Dual Transport Protocol
 
 The cmux socket (`/tmp/cmux.sock`) uses **two different protocols**:
