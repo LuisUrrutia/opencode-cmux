@@ -29,8 +29,6 @@ jobs:
     name: Build, publish, and create release
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
 
     steps:
       - name: Resolve release tag
@@ -73,12 +71,6 @@ jobs:
           node-version: latest
           registry-url: https://registry.npmjs.org
 
-      - name: Configure npm token fallback
-        if: ${{ env.HAS_NPM_TOKEN == 'true' }}
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-
       - name: Verify package version matches tag
         env:
           RELEASE_TAG: ${{ steps.release-tag.outputs.tag }}
@@ -102,7 +94,7 @@ jobs:
 
       - name: Publish to npm
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
-        run: npm publish --access public --provenance
+        run: npm publish --access public
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0

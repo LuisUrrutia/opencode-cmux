@@ -35,10 +35,9 @@ generated entrypoint:
 
 ## Release process
 
-Maintainers publish releases from version tags such as `v0.3.0`. The tag must
+Maintainers publish releases from version tags such as `v1.0.0`. The tag must
 match `package.json` exactly. The release workflow runs tests, builds `dist`,
 packs the npm tarball, publishes to npm, and creates a GitHub release.
 
-Prefer npm Trusted Publishing for this repository so the release workflow can
-publish through GitHub OIDC. If Trusted Publishing is not configured, add an
-`NPM_TOKEN` Actions secret as a fallback.
+Configure npm Trusted Publishing for this repository before publishing. The
+workflow uses GitHub OIDC and does not accept a long-lived npm token fallback.
