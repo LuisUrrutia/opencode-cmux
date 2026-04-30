@@ -17,7 +17,6 @@ import {
   buildSocketReportGitBranch,
   buildSocketSetProgress,
   buildSocketSetStatus,
-  parseCmuxResponse,
 } from "./commands.js"
 
 // ---------------------------------------------------------------------------
@@ -128,10 +127,10 @@ export function socketRequest(
 }
 
 /**
- * Send a text-protocol command and resolve once the payload has been written.
- * cmux sidebar text commands are fire-and-forget in practice: the app may keep
- * the socket open without sending a response, so waiting for end/close causes
- * false timeouts even though the command was accepted.
+ * Send a socket payload and resolve once it has been written. Some cmux socket
+ * commands are fire-and-forget in practice: the app may keep the socket open
+ * without sending a response, so waiting for end/close causes false timeouts
+ * even though the command was accepted.
  */
 export function socketWrite(options: SocketWriteOptions): Promise<SocketOutcome> {
   return new Promise((resolve) => {
@@ -240,12 +239,12 @@ export class SocketCmuxClient implements CmuxClient {
       this.workspaceID,
       this.surfaceID,
     )
-    await this.sendJsonRpc(message, "notify")
+    await this.sendJsonWrite(message, "notify")
   }
 
   public async clearNotifications(): Promise<void> {
-    const message = buildSocketClearNotifications(this.tabID)
-    await this.sendText(message, "clear_notifications")
+    const message = buildSocketClearNotifications(this.nextRequestID())
+    await this.sendJsonWrite(message, "notification.clear")
   }
 
   public async setStatus(
@@ -294,13 +293,10 @@ export class SocketCmuxClient implements CmuxClient {
     return `req-${++this.requestCounter}`
   }
 
-  /**
-   * Send a JSON-RPC request and check the response for ok:false.
-   */
-  private async sendJsonRpc(payload: string, label: string): Promise<void> {
+  private async sendJsonWrite(payload: string, label: string): Promise<void> {
     if (this.connectionDisabled) return
 
-    const outcome = await socketRequest({
+    const outcome = await socketWrite({
       socketPath: this.socketPath,
       payload,
       timeoutMs: this.timeoutMs,
@@ -309,13 +305,6 @@ export class SocketCmuxClient implements CmuxClient {
     if (outcome.error) {
       this.handleError(outcome.error, label)
       return
-    }
-
-    const parsed = parseCmuxResponse(outcome.response)
-    if (parsed && !parsed.ok) {
-      await this.logger.log("warn", `cmux ${label} returned error`, {
-        error: parsed.error,
-      })
     }
   }
 

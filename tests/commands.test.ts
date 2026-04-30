@@ -292,18 +292,6 @@ describe("Socket text-format builders", () => {
     })
   })
 
-  describe("buildSocketClearNotifications", () => {
-    test("produces correct format with tab", () => {
-      const result = buildSocketClearNotifications(workspaceID)
-      expect(result).toBe(`clear_notifications --tab=${workspaceID}\n`)
-    })
-
-    test("omits --tab= when workspaceID is undefined", () => {
-      const result = buildSocketClearNotifications()
-      expect(result).toBe("clear_notifications\n")
-    })
-  })
-
   describe("buildSocketNotifyTarget", () => {
     test("produces targeted notification text protocol", () => {
       const result = buildSocketNotifyTarget(
@@ -520,6 +508,24 @@ describe("Socket JSON-RPC builders", () => {
       )
       const parsed = JSON.parse(result.trim())
       expect("workspace_id" in parsed.params).toBe(false)
+    })
+  })
+
+  describe("buildSocketClearNotifications", () => {
+    test("produces notification.clear JSON request", () => {
+      const result = buildSocketClearNotifications("req-clear")
+      const parsed = JSON.parse(result.trim())
+
+      expect(parsed).toEqual({
+        id: "req-clear",
+        method: "notification.clear",
+        params: {},
+      })
+    })
+
+    test("is newline-terminated", () => {
+      const result = buildSocketClearNotifications("req-clear")
+      expect(result.endsWith("\n")).toBe(true)
     })
   })
 })

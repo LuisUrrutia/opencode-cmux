@@ -121,26 +121,40 @@ npm release of `@luisurrutia/opencode-cmux`:
 
 ## Dual Transport Protocol
 
-The cmux socket (`/tmp/cmux.sock`) uses **two different protocols**:
+The cmux API docs (`https://cmux.com/docs/api`) define the socket as one
+newline-terminated JSON request per call:
+`{"id":"req-1","method":"workspace.list","params":{}}\n`. JSON socket
+requests must use `method` and `params`; legacy v1 JSON payloads like
+`{"command":"..."}` are not supported. Responses are cmux-shaped JSON
+(`{"id":"req-1","ok":true,"result":{...}}`), not standard JSON-RPC 2.0.
+
+Sidebar metadata is the exception: it still uses the text socket protocol.
+So this plugin uses **two different socket protocols**:
 
 | Command type        | Protocol    | Format example |
 |---------------------|-------------|----------------|
 | Sidebar metadata    | Text (v1)   | `set_status opencode "working: bash" --icon=terminal --color=#f59e0b --tab=<uuid>\n` |
-| Notifications       | JSON-RPC    | `{"id":"req-1","method":"notification.create","params":{"title":"Done"}}\n` |
+| Notifications       | JSON request | `{"id":"req-1","method":"notification.create","params":{"title":"Done"}}\n` |
 
 Key differences from CLI:
 - Socket sidebar commands use **underscores** (`set_status`) not hyphens (`set-status`)
 - Socket sidebar commands use `--key=value` not `--key value`
 - Socket sidebar commands use `--tab=<uuid>` not `--workspace <uuid>`
 - **Multi-word positional values must be quoted** (e.g. `"working: bash"`)
-- JSON-RPC responses use `{"ok":true}` not standard JSON-RPC 2.0 format
+- Notification socket methods are `notification.create`, `notification.clear`,
+  and `notification.list`; do not use sidebar-style text commands for them.
+- JSON socket responses use `{"ok":true}` not standard JSON-RPC 2.0 format.
 - Socket text/sidebar commands are **fire-and-forget**. Resolve after the
   payload is written; do **not** wait for a response or for the server to close
   the connection. The macOS cmux socket can accept the connection and keep it
-  open for more than 5s after commands like `clear_notifications`, even though
+  open for more than 5s after sidebar commands like `clear_log`, even though
   the path is correct.
-- JSON-RPC notification commands are different: keep waiting for their response
-  and parse `ok:false` failures.
+- Notification writes should also be treated as write-complete in this plugin:
+  the documented JSON request is correct, but observed macOS cmux sockets can
+  accept `notification.create`/`notification.clear` and keep the connection open,
+  which makes response-waiting code report false `ETIMEDOUT` failures.
+- Use response parsing only for socket API calls where this plugin needs the
+  returned `result` or must act on `ok:false`.
 
 The CLI transport is always safe for multi-word values because `spawn()`
 passes them as separate array elements. The socket text protocol is the one
@@ -150,6 +164,13 @@ Command builders live in `src/cmux/commands.ts` — CLI builders return
 `string[]`, socket builders return `string`.
 
 Socket detection caveats:
+- Default socket paths from the docs are `/tmp/cmux.sock`,
+  `/tmp/cmux-debug.sock`, and `/tmp/cmux-debug-<tag>.sock`, with
+  `CMUX_SOCKET_PATH` as the override. The macOS app may also expose
+  `~/Library/Application Support/cmux/cmux.sock`.
+- Socket access mode can be `off`, `cmuxOnly`, or `allowAll` via
+  `CMUX_SOCKET_MODE`; default settings normally allow only processes spawned
+  inside cmux terminals.
 - `hasSocket: true` only means `statSync(socketPath).isSocket()` passed. It
   does not prove cmux will answer a command.
 - A wrong or absent socket usually surfaces as `ENOENT` or `ECONNREFUSED`.

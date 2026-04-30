@@ -126,10 +126,6 @@ export function buildSocketClearStatus(
   return withTab(`clear_status ${key}`, workspaceID)
 }
 
-export function buildSocketClearNotifications(workspaceID?: string): string {
-  return withTab("clear_notifications", workspaceID)
-}
-
 export function buildSocketNotifyTarget(
   payload: NotificationPayload,
   workspaceID: string,
@@ -216,6 +212,10 @@ export function buildSocketNotify(
     },
     requestID,
   )
+}
+
+export function buildSocketClearNotifications(requestID: string): string {
+  return buildJsonRpc("notification.clear", {}, requestID)
 }
 
 // ---------------------------------------------------------------------------

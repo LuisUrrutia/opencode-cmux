@@ -261,7 +261,7 @@ describe("SocketCmuxClient", () => {
   })
 
   describe("clearNotifications and reportGitBranch", () => {
-    test("send text commands to the socket", async () => {
+    test("sends notification clear JSON and git text commands to the socket", async () => {
       let received = ""
       const ts = await createTestServer((data) => {
         received = data
@@ -277,7 +277,12 @@ describe("SocketCmuxClient", () => {
 
       await client.clearNotifications()
       await waitFor(() => {
-        expect(received.trim()).toBe(`clear_notifications --tab=${workspaceID}`)
+        const parsed = JSON.parse(received.trim())
+        expect(parsed).toEqual({
+          id: "req-1",
+          method: "notification.clear",
+          params: {},
+        })
       })
 
       received = ""
@@ -291,11 +296,11 @@ describe("SocketCmuxClient", () => {
   })
 
   describe("notify (JSON-RPC)", () => {
-    test("sends JSON-RPC to server and receives ok:true response", async () => {
+    test("writes JSON-RPC notification without waiting for a response", async () => {
       let receivedData = ""
       const ts = await createTestServer((data) => {
         receivedData = data
-        return JSON.stringify({ id: "req-1", ok: true, result: {} })
+        return ""
       })
 
       const logger = createTestLogger()
@@ -307,11 +312,13 @@ describe("SocketCmuxClient", () => {
 
       await client.notify({ title: "Build Done", body: "All tests passed" })
 
-      const parsed = JSON.parse(receivedData.trim())
-      expect(parsed.method).toBe("notification.create")
-      expect(parsed.params.title).toBe("Build Done")
-      expect(parsed.params.body).toBe("All tests passed")
-      expect(logger.calls).toHaveLength(0) // No warnings
+      await waitFor(() => {
+        const parsed = JSON.parse(receivedData.trim())
+        expect(parsed.method).toBe("notification.create")
+        expect(parsed.params.title).toBe("Build Done")
+        expect(parsed.params.body).toBe("All tests passed")
+      })
+      expect(logger.calls).toHaveLength(0)
     })
 
     test("uses JSON-RPC with workspace and surface when both are available", async () => {
@@ -335,14 +342,16 @@ describe("SocketCmuxClient", () => {
         body: "All tests passed",
       })
 
-      const parsed = JSON.parse(receivedData.trim())
-      expect(parsed.method).toBe("notification.create")
-      expect(parsed.params).toEqual({
-        title: "Build Done",
-        subtitle: "opencode",
-        body: "All tests passed",
-        workspace_id: workspaceID,
-        surface_id: "surface-456",
+      await waitFor(() => {
+        const parsed = JSON.parse(receivedData.trim())
+        expect(parsed.method).toBe("notification.create")
+        expect(parsed.params).toEqual({
+          title: "Build Done",
+          subtitle: "opencode",
+          body: "All tests passed",
+          workspace_id: workspaceID,
+          surface_id: "surface-456",
+        })
       })
     })
 
@@ -362,10 +371,12 @@ describe("SocketCmuxClient", () => {
 
       await client.notify({ title: "Test", body: "workspace check" })
 
-      const parsed = JSON.parse(receivedData.trim())
-      expect(parsed.params.workspace_id).toBe(workspaceID)
-      expect(parsed.params.title).toBe("Test")
-      expect(parsed.params.surface_id).toBeUndefined()
+      await waitFor(() => {
+        const parsed = JSON.parse(receivedData.trim())
+        expect(parsed.params.workspace_id).toBe(workspaceID)
+        expect(parsed.params.title).toBe("Test")
+        expect(parsed.params.surface_id).toBeUndefined()
+      })
     })
 
     test("omits workspace_id when client has no workspaceID", async () => {
@@ -384,29 +395,11 @@ describe("SocketCmuxClient", () => {
 
       await client.notify({ title: "Test" })
 
-      const parsed = JSON.parse(receivedData.trim())
-      expect("workspace_id" in parsed.params).toBe(false)
-      expect(parsed.params.surface_id).toBe("surface-456")
-    })
-
-    test("logs warning on ok:false response", async () => {
-      const ts = await createTestServer(() => {
-        return JSON.stringify({ id: "req-1", ok: false, error: "rate limited" })
+      await waitFor(() => {
+        const parsed = JSON.parse(receivedData.trim())
+        expect("workspace_id" in parsed.params).toBe(false)
+        expect(parsed.params.surface_id).toBe("surface-456")
       })
-
-      const logger = createTestLogger()
-      const client = new SocketCmuxClient({
-        socketPath: ts.socketPath,
-        logger,
-      })
-
-      await client.notify({ title: "Test" })
-
-      expect(logger.calls.length).toBeGreaterThanOrEqual(1)
-      const warnCall = logger.calls.find((c) => c.level === "warn")
-      expect(warnCall).toBeDefined()
-      expect(warnCall!.message).toContain("notify")
-      expect(warnCall!.message).toContain("error")
     })
 
     test("increments request IDs for JSON-RPC calls", async () => {
@@ -427,7 +420,9 @@ describe("SocketCmuxClient", () => {
       await client.notify({ title: "Second" })
       await client.notify({ title: "Third" })
 
-      expect(receivedIDs).toEqual(["req-1", "req-2", "req-3"])
+      await waitFor(() => {
+        expect(receivedIDs).toEqual(["req-1", "req-2", "req-3"])
+      })
     })
   })
 
@@ -626,17 +621,19 @@ describe("SocketCmuxClient", () => {
       expect(errorCalls).toHaveLength(1)
     })
 
-    test("handles timeout gracefully (no throw)", async () => {
-      // Create a server that never responds
+    test("notify resolves when the server keeps the connection open", async () => {
       const socketPath = join(
         tmpdir(),
         `cmux-test-hang-${Date.now()}.sock`,
       )
       const sockets = new Set<Parameters<Parameters<typeof createServer>[0]>[0]>()
+      let receivedData = ""
       const server = createServer((socket) => {
         sockets.add(socket)
         socket.on("close", () => sockets.delete(socket))
-        // Hold connection open
+        socket.on("data", (chunk) => {
+          receivedData += chunk.toString()
+        })
       })
 
       await new Promise<void>((resolve, reject) => {
@@ -665,15 +662,20 @@ describe("SocketCmuxClient", () => {
         timeoutMs: 100,
       })
 
-      // Should not throw
+      const startedAt = Date.now()
       await client.notify({ title: "hello" })
 
+      expect(Date.now() - startedAt).toBeLessThan(500)
+      await waitFor(() => {
+        const parsed = JSON.parse(receivedData.trim())
+        expect(parsed.method).toBe("notification.create")
+        expect(parsed.params.title).toBe("hello")
+      })
       const errorCalls = logger.calls.filter((c) => c.level === "error")
-      expect(errorCalls.length).toBeGreaterThanOrEqual(1)
-      expect(errorCalls[0].extra?.code).toBe("ETIMEDOUT")
+      expect(errorCalls).toHaveLength(0)
     })
 
-    test("does not disable text commands after a response timeout", async () => {
+    test("continues sending text commands after a notification write", async () => {
       const socketPath = join(
         tmpdir(),
         `cmux-test-retry-${Date.now()}.sock`,
@@ -717,7 +719,7 @@ describe("SocketCmuxClient", () => {
         timeoutMs: 100,
       })
 
-      await client.notify({ title: "will timeout" })
+      await client.notify({ title: "will write" })
       await client.setStatus("test", {
         text: "working",
         icon: "terminal",
