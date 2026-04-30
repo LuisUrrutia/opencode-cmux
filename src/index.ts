@@ -48,7 +48,7 @@ const plugin: Plugin = async (ctx) => {
     sessionResolver,
   })
 
-  await logger.log("info", "Initialized opencode-cmux plugin", {
+  void logger.log("info", "Initialized opencode-cmux plugin", {
     project: project.label,
     workspaceID: environment.workspaceID,
     socketPath: environment.socketPath,
@@ -56,8 +56,12 @@ const plugin: Plugin = async (ctx) => {
     hasSocket: environment.hasSocket,
   })
 
-  await coordinator.initialize()
-  await coordinator.syncGitState()
+  setTimeout(() => {
+    void (async () => {
+      await coordinator.initialize()
+      await coordinator.syncGitState()
+    })()
+  }, 0)
 
   let cleanupStarted = false
   process.once("beforeExit", () => {

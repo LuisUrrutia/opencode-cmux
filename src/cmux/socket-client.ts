@@ -134,7 +134,7 @@ interface SocketCmuxClientOptions {
   timeoutMs?: number
 }
 
-const DEFAULT_TIMEOUT_MS = 5000
+const DEFAULT_TIMEOUT_MS = 750
 
 export class SocketCmuxClient implements CmuxClient {
   public readonly available: boolean
@@ -145,6 +145,7 @@ export class SocketCmuxClient implements CmuxClient {
 
   private requestCounter = 0
   private reportedConnectionFailure = false
+  private connectionDisabled = false
 
   private readonly socketPath: string
   private readonly logger: PluginLogger
@@ -226,6 +227,8 @@ export class SocketCmuxClient implements CmuxClient {
    * Send a JSON-RPC request and check the response for ok:false.
    */
   private async sendJsonRpc(payload: string, label: string): Promise<void> {
+    if (this.connectionDisabled) return
+
     const outcome = await socketRequest({
       socketPath: this.socketPath,
       payload,
@@ -249,6 +252,8 @@ export class SocketCmuxClient implements CmuxClient {
    * Send a text-format command. Response is ignored (sidebar commands return "OK").
    */
   private async sendText(payload: string, label: string): Promise<void> {
+    if (this.connectionDisabled) return
+
     const outcome = await socketRequest({
       socketPath: this.socketPath,
       payload,
@@ -269,7 +274,13 @@ export class SocketCmuxClient implements CmuxClient {
     error: { code: string; message: string },
     label: string,
   ): void {
-    if (error.code === "ECONNREFUSED" || error.code === "ENOENT") {
+    const isConnectionFailure =
+      error.code === "ECONNREFUSED" ||
+      error.code === "ENOENT" ||
+      error.code === "ETIMEDOUT"
+
+    if (isConnectionFailure) {
+      this.connectionDisabled = true
       if (this.reportedConnectionFailure) return
       this.reportedConnectionFailure = true
     }

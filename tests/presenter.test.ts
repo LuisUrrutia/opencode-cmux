@@ -201,29 +201,90 @@ describe("CmuxStateCoordinator", () => {
     await coordinator.handleSessionStatus("primary", "idle")
     await coordinator.flush()
 
-    expect(cmux.calls).toContainEqual({
-      type: "notify",
-      payload: {
-        title: "Done: demo",
-        body: "Implement feature",
+    expect(cmux.calls.map((call) => call.type)).toEqual([
+      "setStatus",
+      "setProgress",
+      "log",
+      "notify",
+    ])
+    expect(cmux.calls).toEqual([
+      {
+        type: "setStatus",
+        key: "opencode",
+        payload: {
+          text: "done",
+          icon: "check-circle",
+          color: "#22c55e",
+        },
+      },
+      {
+        type: "setProgress",
+        payload: {
+          value: 1,
+          label: "demo: done",
+        },
+      },
+      {
+        type: "log",
+        payload: {
+          level: "success",
+          source: "opencode",
+          message: "demo: done - Implement feature",
+        },
+      },
+      {
+        type: "notify",
+        payload: {
+          title: "Done: demo",
+          body: "Implement feature",
+        },
+      },
+    ])
+  })
+
+  test("subagent idle does not complete the primary session", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+      subagent: {
+        id: "subagent",
+        title: "Write docs",
+        parentID: "primary",
+        kind: "subagent",
       },
     })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleSessionStatus("subagent", "busy")
+    await coordinator.flush()
+    cmux.reset()
+
+    await coordinator.handleSessionStatus("subagent", "idle")
+    await coordinator.flush()
+
+    expect(cmux.calls.some((call) => call.type === "notify")).toBe(false)
+    expect(
+      cmux.calls.some(
+        (call) => call.type === "setStatus" && call.payload.text === "done",
+      ),
+    ).toBe(false)
+    expect(
+      cmux.calls.some(
+        (call) => call.type === "setProgress" && call.payload.label === "demo: done",
+      ),
+    ).toBe(false)
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
       key: "opencode",
       payload: {
-        text: "done",
-        icon: "check-circle",
-        color: "#22c55e",
+        text: "working",
+        icon: "terminal",
+        color: "#f59e0b",
       },
     })
-
-    // Progress value at idle is 1.0
-    const doneProgress = cmux.calls.find(
-      (c) => c.type === "setProgress" && c.payload.label === "demo: done",
-    )
-    expect(doneProgress).toBeDefined()
-    expect(doneProgress!.payload.value).toBeCloseTo(1.0, 1)
   })
 
   test("overlays question state and restores working status with subagent count", async () => {

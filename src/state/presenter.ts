@@ -510,6 +510,7 @@ export class CmuxStateCoordinator {
 
       if (previous?.activity === "busy") {
         this.progressTracker.reset()
+        await this.renderNow()
         await this.throttledLog({
           level: "success",
           source: "opencode",
@@ -537,7 +538,9 @@ export class CmuxStateCoordinator {
       }
     }
 
-    await this.render()
+    if (metadata.kind !== "primary" || previous?.activity !== "busy") {
+      await this.render()
+    }
     this.resetDoneTimer()
   }
 
@@ -565,12 +568,36 @@ export class CmuxStateCoordinator {
   }
 
   private async clearPresentationBestEffort(): Promise<void> {
+    if (this.options.cmux.transport === "socket") {
+      await this.clearNotificationsBestEffort()
+      await this.clearStatusBestEffort()
+      await this.clearProgressBestEffort()
+      await this.clearLogBestEffort()
+      return
+    }
+
     await Promise.allSettled([
       this.options.cmux.clearNotifications(),
       this.options.cmux.clearStatus(this.options.config.statusKey),
       this.options.cmux.clearProgress(),
       this.options.cmux.clearLog(),
     ])
+  }
+
+  private async clearStatusBestEffort(): Promise<void> {
+    try {
+      await this.options.cmux.clearStatus(this.options.config.statusKey)
+    } catch {
+      // Best effort only.
+    }
+  }
+
+  private async clearProgressBestEffort(): Promise<void> {
+    try {
+      await this.options.cmux.clearProgress()
+    } catch {
+      // Best effort only.
+    }
   }
 
   private async refreshGitStateIfNeeded(

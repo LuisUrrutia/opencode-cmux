@@ -52,12 +52,12 @@ describe("detectCmuxEnvironment", () => {
     expect(result.workspaceID).toBeUndefined()
   })
 
-  test("defaults socket path to /tmp/cmux.sock", () => {
+  test("uses a fallback cmux socket path when no socket env is set", () => {
     const env = {} as NodeJS.ProcessEnv
 
     const result = detectCmuxEnvironment(env)
 
-    expect(result.socketPath).toBe("/tmp/cmux.sock")
+    expect(result.socketPath.endsWith("cmux.sock")).toBe(true)
   })
 
   test("uses custom socket path when CMUX_SOCKET_PATH is set", () => {
@@ -68,6 +68,38 @@ describe("detectCmuxEnvironment", () => {
     const result = detectCmuxEnvironment(env)
 
     expect(result.socketPath).toBe("/run/user/1000/cmux.sock")
+  })
+
+  test("uses CMUX_SOCKET as a socket path alias", () => {
+    const env = {
+      CMUX_SOCKET: "/run/user/1000/cmux-alias.sock",
+    } as NodeJS.ProcessEnv
+
+    const result = detectCmuxEnvironment(env)
+
+    expect(result.socketPath).toBe("/run/user/1000/cmux-alias.sock")
+  })
+
+  test("prefers CMUX_SOCKET_PATH over CMUX_SOCKET", () => {
+    const env = {
+      CMUX_SOCKET_PATH: "/explicit/cmux.sock",
+      CMUX_SOCKET: "/alias/cmux.sock",
+    } as NodeJS.ProcessEnv
+
+    const result = detectCmuxEnvironment(env)
+
+    expect(result.socketPath).toBe("/explicit/cmux.sock")
+  })
+
+  test("supports explicit Windows named pipe socket paths", () => {
+    const env = {
+      CMUX_SOCKET_PATH: "\\\\.\\pipe\\cmux.sock",
+    } as NodeJS.ProcessEnv
+
+    const result = detectCmuxEnvironment(env)
+
+    expect(result.socketPath).toBe("\\\\.\\pipe\\cmux.sock")
+    expect(result.hasSocket).toBe(true)
   })
 
   test("reads CMUX_TAB_ID, CMUX_SURFACE_ID, and TERM_PROGRAM", () => {
