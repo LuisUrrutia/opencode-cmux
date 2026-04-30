@@ -13,6 +13,7 @@ import {
   buildSocketClearStatus,
   buildSocketLog,
   buildSocketNotify,
+  buildSocketNotifyTarget,
   buildSocketReportGitBranch,
   buildSocketSetProgress,
   buildSocketSetStatus,
@@ -127,6 +128,7 @@ export function socketRequest(
 interface SocketCmuxClientOptions {
   socketPath: string
   workspaceID?: string
+  surfaceID?: string
   logger: PluginLogger
   timeoutMs?: number
 }
@@ -137,6 +139,7 @@ export class SocketCmuxClient implements CmuxClient {
   public readonly available: boolean
   public readonly transport = "socket" as const
   public readonly workspaceID?: string
+  public readonly surfaceID?: string
 
   private requestCounter = 0
   private reportedConnectionFailure = false
@@ -148,6 +151,7 @@ export class SocketCmuxClient implements CmuxClient {
   constructor(options: SocketCmuxClientOptions) {
     this.socketPath = options.socketPath
     this.workspaceID = options.workspaceID
+    this.surfaceID = options.surfaceID
     this.logger = options.logger
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
     this.available = true
@@ -155,7 +159,18 @@ export class SocketCmuxClient implements CmuxClient {
 
   public async notify(payload: NotificationPayload): Promise<void> {
     const requestID = this.nextRequestID()
-    const message = buildSocketNotify(payload, requestID, this.workspaceID)
+    if (this.workspaceID && this.surfaceID) {
+      const message = buildSocketNotifyTarget(payload, this.workspaceID, this.surfaceID)
+      await this.sendText(message, "notify_target")
+      return
+    }
+
+    const message = buildSocketNotify(
+      payload,
+      requestID,
+      this.workspaceID,
+      this.surfaceID,
+    )
     await this.sendJsonRpc(message, "notify")
   }
 

@@ -38,6 +38,7 @@ export class FakeCmuxClient implements CmuxClient {
   public readonly available = true
   public readonly transport = "cli" as const
   public readonly workspaceID = "workspace:1"
+  public readonly surfaceID = "surface:1"
   public readonly calls: FakeCall[] = []
 
   public async clearNotifications(): Promise<void> {

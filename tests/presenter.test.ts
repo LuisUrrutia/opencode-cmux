@@ -13,6 +13,14 @@ describe("FakeCmuxClient", () => {
 })
 
 describe("CmuxStateCoordinator", () => {
+  test("initialize clears stale notifications", async () => {
+    const { coordinator, cmux } = createCoordinator({})
+
+    await coordinator.initialize()
+
+    expect(cmux.calls[0]).toEqual({ type: "clearNotifications" })
+  })
+
   test("clears notifications when a tool starts", async () => {
     const { coordinator, cmux } = createCoordinator({
       primary: {
@@ -26,6 +34,20 @@ describe("CmuxStateCoordinator", () => {
     cmux.reset()
 
     await coordinator.handleToolStarted("bash", { command: "npm test" })
+
+    expect(cmux.calls[0]).toEqual({ type: "clearNotifications" })
+  })
+
+  test("clears notifications when a session is created", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionCreated("primary")
 
     expect(cmux.calls[0]).toEqual({ type: "clearNotifications" })
   })

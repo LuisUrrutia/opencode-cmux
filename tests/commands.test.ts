@@ -13,6 +13,7 @@ import {
   buildSocketSetStatus,
   buildSocketClearStatus,
   buildSocketClearNotifications,
+  buildSocketNotifyTarget,
   buildSocketSetProgress,
   buildSocketClearProgress,
   buildSocketLog,
@@ -51,10 +52,11 @@ describe("CLI command builders", () => {
     ])
   })
 
-  test("buildNotifyCommand with workspace", () => {
+  test("buildNotifyCommand with workspace and surface", () => {
     const result = buildNotifyCommand(
       { title: "Build done", body: "All tests passed" },
       "ws-123",
+      "surface-456",
     )
     expect(result).toEqual([
       "notify",
@@ -64,12 +66,29 @@ describe("CLI command builders", () => {
       "All tests passed",
       "--workspace",
       "ws-123",
+      "--surface",
+      "surface-456",
     ])
   })
 
   test("buildNotifyCommand without workspace omits --workspace", () => {
     const result = buildNotifyCommand({ title: "Build done" })
     expect(result).not.toContain("--workspace")
+  })
+
+  test("buildNotifyCommand with surface adds --surface", () => {
+    const result = buildNotifyCommand(
+      { title: "Build done" },
+      undefined,
+      "surface-456",
+    )
+    expect(result).toEqual([
+      "notify",
+      "--title",
+      "Build done",
+      "--surface",
+      "surface-456",
+    ])
   })
 
   test("buildClearNotificationsCommand with workspace", () => {
@@ -278,6 +297,32 @@ describe("Socket text-format builders", () => {
     })
   })
 
+  describe("buildSocketNotifyTarget", () => {
+    test("produces targeted notification text protocol", () => {
+      const result = buildSocketNotifyTarget(
+        { title: "Build done", subtitle: "opencode", body: "All tests passed" },
+        "workspace-123",
+        "surface-456",
+      )
+
+      expect(result).toBe(
+        'notify_target workspace-123 surface-456 "Build done|opencode|All tests passed"\n',
+      )
+    })
+
+    test("quotes pipe characters in notification payload", () => {
+      const result = buildSocketNotifyTarget(
+        { title: "Build|done", body: "Ready" },
+        "workspace-123",
+        "surface-456",
+      )
+
+      expect(result).toBe(
+        'notify_target workspace-123 surface-456 "Build|done||Ready"\n',
+      )
+    })
+  })
+
   describe("buildSocketLog", () => {
     test("produces correct format with -- separator for message", () => {
       const result = buildSocketLog(
@@ -434,6 +479,18 @@ describe("Socket JSON-RPC builders", () => {
       )
       expect(parsed.params.title).toBe("Build Done")
       expect(parsed.params.body).toBe("All tests passed")
+    })
+
+    test("includes surface_id when provided", () => {
+      const result = buildSocketNotify(
+        { title: "Build Done" },
+        "req-10",
+        "C741C8F0-DD75-4BF2-83BF-2CC032234753",
+        "surface-456",
+      )
+
+      const parsed = JSON.parse(result.trim())
+      expect(parsed.params.surface_id).toBe("surface-456")
     })
 
     test("omits workspace_id when undefined", () => {

@@ -62,15 +62,20 @@ class CliCmuxClient implements CmuxClient {
   public readonly available: boolean
   public readonly transport = "cli" as const
   public readonly workspaceID?: string
+  public readonly surfaceID?: string
   private reportedMissingBinary = false
 
   public constructor(private readonly options: CreateCmuxClientOptions) {
     this.available = options.environment.isManagedWorkspace
     this.workspaceID = options.environment.workspaceID
+    this.surfaceID = options.environment.surfaceID
   }
 
   public async notify(payload: Parameters<CmuxClient["notify"]>[0]): Promise<void> {
-    await this.execute("notify", buildNotifyCommand(payload, this.workspaceID))
+    await this.execute(
+      "notify",
+      buildNotifyCommand(payload, this.workspaceID, this.surfaceID),
+    )
   }
 
   public async clearNotifications(): Promise<void> {
@@ -190,6 +195,7 @@ export function createCmuxClient(options: CreateCmuxClientOptions): CmuxClient {
     return new SocketCmuxClient({
       socketPath: options.environment.socketPath,
       workspaceID: options.environment.workspaceID,
+      surfaceID: options.environment.surfaceID,
       logger: options.logger,
     })
   }

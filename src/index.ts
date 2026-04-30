@@ -56,6 +56,7 @@ const plugin: Plugin = async (ctx) => {
     hasSocket: environment.hasSocket,
   })
 
+  await coordinator.initialize()
   await coordinator.syncGitState()
 
   /** Best-effort error logging — never throws. */

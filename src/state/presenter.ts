@@ -96,6 +96,10 @@ export class CmuxStateCoordinator {
 
   public constructor(private readonly options: CoordinatorOptions) {}
 
+  public async initialize(): Promise<void> {
+    await this.clearNotificationsBestEffort()
+  }
+
   /** Call this from every public handler to keep the watchdog alive. */
   private touchEventTimestamp(): void {
     this.lastEventAt = Date.now()
@@ -313,6 +317,7 @@ export class CmuxStateCoordinator {
 
   public async handleSessionCreated(sessionID: string): Promise<void> {
     this.touchEventTimestamp()
+    await this.clearNotificationsBestEffort()
     // Eagerly resolve and cache session metadata so subsequent events are faster
     const metadata = await this.resolveSession(sessionID)
 

@@ -237,6 +237,32 @@ describe("SocketCmuxClient", () => {
       expect(logger.calls).toHaveLength(0) // No warnings
     })
 
+    test("uses notify_target text protocol when workspace and surface are available", async () => {
+      let receivedData = ""
+      const ts = await createTestServer((data) => {
+        receivedData = data
+        return "OK"
+      })
+
+      const logger = createTestLogger()
+      const client = new SocketCmuxClient({
+        socketPath: ts.socketPath,
+        workspaceID,
+        surfaceID: "surface-456",
+        logger,
+      })
+
+      await client.notify({
+        title: "Build Done",
+        subtitle: "opencode",
+        body: "All tests passed",
+      })
+
+      expect(receivedData).toBe(
+        `notify_target ${workspaceID} surface-456 "Build Done|opencode|All tests passed"\n`,
+      )
+    })
+
     test("includes workspace_id in JSON-RPC params when client has workspaceID", async () => {
       let receivedData = ""
       const ts = await createTestServer((data) => {
@@ -256,6 +282,7 @@ describe("SocketCmuxClient", () => {
       const parsed = JSON.parse(receivedData.trim())
       expect(parsed.params.workspace_id).toBe(workspaceID)
       expect(parsed.params.title).toBe("Test")
+      expect(parsed.params.surface_id).toBeUndefined()
     })
 
     test("omits workspace_id when client has no workspaceID", async () => {
@@ -268,6 +295,7 @@ describe("SocketCmuxClient", () => {
       const logger = createTestLogger()
       const client = new SocketCmuxClient({
         socketPath: ts.socketPath,
+        surfaceID: "surface-456",
         logger,
       })
 
@@ -275,6 +303,7 @@ describe("SocketCmuxClient", () => {
 
       const parsed = JSON.parse(receivedData.trim())
       expect("workspace_id" in parsed.params).toBe(false)
+      expect(parsed.params.surface_id).toBe("surface-456")
     })
 
     test("logs warning on ok:false response", async () => {

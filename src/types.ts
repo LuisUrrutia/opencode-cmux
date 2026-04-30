@@ -117,6 +117,7 @@ export interface CmuxClient {
   readonly available: boolean
   readonly transport: "cli" | "socket"
   readonly workspaceID?: string
+  readonly surfaceID?: string
   clearNotifications(): Promise<void>
   notify(payload: NotificationPayload): Promise<void>
   setStatus(key: string, payload: SidebarStatusPayload): Promise<void>

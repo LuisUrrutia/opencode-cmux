@@ -16,11 +16,13 @@ function withWorkspace(args: string[], workspaceID?: string): string[] {
 export function buildNotifyCommand(
   payload: NotificationPayload,
   workspaceID?: string,
+  surfaceID?: string,
 ): string[] {
   const args = ["notify", "--title", payload.title]
   if (payload.subtitle) args.push("--subtitle", payload.subtitle)
   if (payload.body) args.push("--body", payload.body)
-  return withWorkspace(args, workspaceID)
+  const withContext = withWorkspace(args, workspaceID)
+  return surfaceID ? [...withContext, "--surface", surfaceID] : withContext
 }
 
 export function buildClearNotificationsCommand(workspaceID?: string): string[] {
@@ -93,11 +95,10 @@ export function buildLogCommand(
 // Socket command builders (text format — sidebar metadata commands)
 // ---------------------------------------------------------------------------
 
-/** Quote a value for the socket text protocol if it contains spaces. */
+/** Quote a value for the socket text protocol if it contains whitespace or separators. */
 function quote(value: string): string {
-  if (!value.includes(" ")) return value
-  // Escape any embedded double quotes, then wrap in double quotes
-  return `"${value.replace(/"/g, '\\"')}"`
+  if (!/[\s"|]/.test(value)) return value
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
 }
 
 function withTab(command: string, workspaceID?: string): string {
@@ -123,6 +124,15 @@ export function buildSocketClearStatus(
 
 export function buildSocketClearNotifications(workspaceID?: string): string {
   return withTab("clear_notifications", workspaceID)
+}
+
+export function buildSocketNotifyTarget(
+  payload: NotificationPayload,
+  workspaceID: string,
+  surfaceID: string,
+): string {
+  const text = [payload.title, payload.subtitle || "", payload.body || ""].join("|")
+  return `notify_target ${workspaceID} ${surfaceID} ${quote(text)}\n`
 }
 
 export function buildSocketReportGitBranch(
@@ -185,6 +195,7 @@ export function buildSocketNotify(
   payload: NotificationPayload,
   requestID: string,
   workspaceID?: string,
+  surfaceID?: string,
 ): string {
   return buildJsonRpc(
     "notification.create",
@@ -193,6 +204,7 @@ export function buildSocketNotify(
       subtitle: payload.subtitle,
       body: payload.body,
       workspace_id: workspaceID,
+      surface_id: surfaceID,
     },
     requestID,
   )
