@@ -66,6 +66,8 @@ const LOG_RATE_LIMIT = 5
 /** Window size (ms) for the log rate limiter. */
 const LOG_RATE_WINDOW_MS = 1000
 
+const LEGACY_EXTRA_STATUS_KEYS = ["tools", "subagents", "todos"] as const
+
 export class CmuxStateCoordinator {
   private readonly sessions = new Map<string, SessionRuntime>()
   private primaryState?: SessionRuntime
@@ -157,6 +159,7 @@ export class CmuxStateCoordinator {
     if (metadata.kind === "primary") {
       this.pendingPermission = undefined
       this.pendingQuestion = undefined
+      this.clearTransientAuxiliaryState()
       await this.options.cmux.notify({
         title: `Error: ${this.options.project.label}`,
         body: formatSessionLabel(metadata),
@@ -201,7 +204,7 @@ export class CmuxStateCoordinator {
     if (this.options.config.notifyQuestions) {
       await this.options.cmux.notify({
         title: `Question: ${this.options.project.label}`,
-        subtitle: header,
+        body: header,
       })
     }
 
@@ -367,7 +370,6 @@ export class CmuxStateCoordinator {
       if (metadata.kind === "primary") {
         this.primaryState = this.sessions.get(sessionID)
         if (existing.activity === "busy" && this.options.config.logSessionLifecycle) {
-          await this.clearLogBestEffort()
           await this.throttledLog({
             level: "progress",
             source: "opencode",
@@ -445,6 +447,8 @@ export class CmuxStateCoordinator {
         message: `${this.options.project.label}: todos: ${completed}/${total} complete`,
       })
     }
+
+    await this.render()
   }
 
   public async syncGitState(): Promise<void> {
@@ -509,6 +513,7 @@ export class CmuxStateCoordinator {
       }
 
       if (previous?.activity === "busy") {
+        this.clearTransientAuxiliaryState()
         this.progressTracker.reset()
         await this.renderNow()
         await this.throttledLog({
@@ -520,6 +525,7 @@ export class CmuxStateCoordinator {
           title: `Done: ${this.options.project.label}`,
           body: formatSessionLabel(metadata),
         })
+        await this.clearCompletedProgressBestEffort()
       }
     } else {
       if (this.options.config.logSubagents && previous?.activity === "busy") {
@@ -559,9 +565,9 @@ export class CmuxStateCoordinator {
     }
   }
 
-  private async clearLogBestEffort(): Promise<void> {
+  private async clearCompletedProgressBestEffort(): Promise<void> {
     try {
-      await this.options.cmux.clearLog()
+      await this.options.cmux.clearProgress()
     } catch {
       // Best effort only.
     }
@@ -593,48 +599,74 @@ export class CmuxStateCoordinator {
     }
 
     await clearIfSafe(() => this.options.cmux.clearNotifications())
+    await clearIfSafe(() => this.options.cmux.clearStatus(this.localStatusKey()))
     await clearIfSafe(() => this.options.cmux.clearStatus(this.options.config.statusKey))
-    await clearIfSafe(() => this.options.cmux.clearProgress())
-    await clearIfSafe(() => this.options.cmux.clearLog())
+    for (const key of LEGACY_EXTRA_STATUS_KEYS) {
+      await clearIfSafe(() => this.options.cmux.clearStatus(this.legacyExtraStatusKey(key)))
+    }
   }
 
   private async clearPresentationBestEffort(): Promise<void> {
     if (!this.canClearPresentationSafely()) return
 
-    if (this.options.cmux.transport === "socket") {
-      await this.clearNotificationsBestEffort()
-      await this.clearStatusBestEffort()
-      await this.clearProgressBestEffort()
-      await this.clearLogBestEffort()
-      return
-    }
-
-    await Promise.allSettled([
+    const cleanup: Promise<void>[] = [
       this.options.cmux.clearNotifications(),
+      this.options.cmux.clearStatus(this.localStatusKey()),
       this.options.cmux.clearStatus(this.options.config.statusKey),
-      this.options.cmux.clearProgress(),
-      this.options.cmux.clearLog(),
-    ])
+      ...LEGACY_EXTRA_STATUS_KEYS.map((key) => this.options.cmux.clearStatus(this.legacyExtraStatusKey(key))),
+    ]
+
+    await Promise.allSettled(cleanup)
   }
 
   private canClearPresentationSafely(): boolean {
     return this.options.cmux.preciseTabTargeting
   }
 
-  private async clearStatusBestEffort(): Promise<void> {
-    try {
-      await this.options.cmux.clearStatus(this.options.config.statusKey)
-    } catch {
-      // Best effort only.
+  private legacyExtraStatusKey(key: typeof LEGACY_EXTRA_STATUS_KEYS[number]): string {
+    return `${this.options.config.statusKey}:${key}`
+  }
+
+  private localStatusKey(): string {
+    return `${this.options.config.statusKey}:${sanitizeStatusKeyPart(this.statusSeed())}`
+  }
+
+  private statusSeed(): string {
+    const preciseCmuxParts = [
+      this.options.cmux.workspaceID,
+      this.options.cmux.tabID,
+      this.options.cmux.surfaceID,
+    ].filter((part): part is string => !!part)
+
+    if (preciseCmuxParts.length === 3) return preciseCmuxParts.join(":")
+
+    const fallbackParts = [
+      ...preciseCmuxParts,
+      this.primaryState?.metadata.id,
+      this.options.project.id,
+      this.options.project.root,
+      `pid-${process.pid}`,
+    ].filter((part): part is string => !!part)
+
+    return fallbackParts.join(":") || this.options.config.statusKey
+  }
+
+  private clearTransientAuxiliaryState(): void {
+    this.activeTools.clear()
+    this.todoState = undefined
+
+    for (const [sessionID, session] of this.sessions) {
+      if (session.metadata.kind === "subagent" && session.activity === "busy") {
+        this.sessions.set(sessionID, {
+          ...session,
+          activity: "idle",
+        })
+      }
     }
   }
 
-  private async clearProgressBestEffort(): Promise<void> {
-    try {
-      await this.options.cmux.clearProgress()
-    } catch {
-      // Best effort only.
-    }
+  private tabAccentColor(): string {
+    return colorFromSeed(this.statusSeed())
   }
 
   private async refreshGitStateIfNeeded(
@@ -664,16 +696,6 @@ export class CmuxStateCoordinator {
    * Returns e.g. "bash" for a single tool, "2 tools" for multiple,
    * or undefined if no tools are active.
    */
-  private describeToolActivity(): string | undefined {
-    if (this.activeTools.size === 0) return undefined
-    if (this.activeTools.size === 1) {
-      const [active] = this.activeTools.values()
-      return active.tool
-    }
-
-    return `${this.activeTools.size} tools`
-  }
-
   private setSessionActivity(
     metadata: SessionMetadata,
     activity: SessionActivity,
@@ -690,12 +712,14 @@ export class CmuxStateCoordinator {
    * Priority (highest to lowest):
    * 1. Permission pending → show "waiting" with lock icon (#ef4444)
    * 2. Question pending → show "question" with help-circle icon (#a855f7)
-   * 3. Session busy → show "working: <tool>" with terminal icon (#f59e0b)
+   * 3. Session busy → show "working" with terminal icon and tab accent color
    * 4. Session error → show "error" with alert-circle icon (#ef4444)
    * 5. Session idle (keepDoneStatus) → show "done" with check-circle icon (#22c55e)
    *
    * Progress bar is independent of status — it tracks estimated completion
-   * when the session is busy/waiting and clears when idle/error/done.
+   * when the session is busy/waiting/done. cmux exposes progress as a shared
+   * workspace resource, so this coordinator writes updates but only clears the
+   * bar immediately after rendering primary completion at 1.0.
    *
    * IMPORTANT: Changes to this priority order affect all sidebar behavior.
    * Update AGENTS.md if the priority changes.
@@ -735,32 +759,19 @@ export class CmuxStateCoordinator {
       }
     }
 
-    if (this.primaryState?.activity === "busy") {
-      const toolSuffix = this.describeToolActivity()
-      const subagentSuffix =
-        subagentCount > 0
-          ? ` · ${subagentCount} subagent${subagentCount === 1 ? "" : "s"}`
-          : ""
-
-      const statusText = toolSuffix
-        ? `working: ${toolSuffix}${subagentSuffix}`
-        : `working${subagentSuffix}`
-
-      const todoSuffix =
-        this.todoState && this.todoState.total > 0
-          ? ` · ${this.todoState.completed}/${this.todoState.total} todos`
-          : ""
-
+    if (this.primaryState?.activity === "busy" || this.activeTools.size > 0 || subagentCount > 0) {
       return {
         status: {
-          text: statusText,
+          text: this.buildWorkingStatusText(subagentCount),
           icon: "terminal",
-          color: "#f59e0b",
+          color: this.tabAccentColor(),
         },
         progress: this.options.config.progressEnabled
           ? {
               value: this.progressTracker.estimate("working"),
-              label: `${this.options.project.label}: ${formatSessionLabel(this.primaryState.metadata)}${todoSuffix}`,
+              label: this.primaryState
+                ? `${this.options.project.label}: ${formatSessionLabel(this.primaryState.metadata)}`
+                : `${this.options.project.label}: working`,
             }
           : undefined,
       }
@@ -793,6 +804,20 @@ export class CmuxStateCoordinator {
     }
 
     return {}
+  }
+
+  private buildWorkingStatusText(subagentCount: number): string {
+    const toolCount = this.activeTools.size
+    const parts = ["working"]
+
+    if (toolCount > 0) {
+      parts.push(`${toolCount} ${pluralize("tool", toolCount)}`)
+    }
+    if (subagentCount > 0) {
+      parts.push(`${subagentCount} ${pluralize("subagent", subagentCount)}`)
+    }
+
+    return parts.join(" - ")
   }
 
   private async render(): Promise<void> {
@@ -876,6 +901,7 @@ export class CmuxStateCoordinator {
           this.primaryState = this.sessions.get(metadata.id)
           this.pendingQuestion = undefined
           this.pendingPermission = undefined
+          this.clearTransientAuxiliaryState()
           this.progressTracker.reset()
 
           await this.options.cmux.log({
@@ -914,6 +940,7 @@ export class CmuxStateCoordinator {
         // Guard: only clear if primary is still idle
         if (this.primaryState?.activity === "idle") {
           this.primaryState = undefined
+          this.clearTransientAuxiliaryState()
           this.progressTracker.reset()
           await this.renderNow()
         }
@@ -955,7 +982,7 @@ export class CmuxStateCoordinator {
 
     if (!nextStatus) {
       if (currentStatus) {
-        await this.options.cmux.clearStatus(this.options.config.statusKey)
+        await this.options.cmux.clearStatus(this.localStatusKey())
       }
       return
     }
@@ -968,7 +995,7 @@ export class CmuxStateCoordinator {
       return
     }
 
-    await this.options.cmux.setStatus(this.options.config.statusKey, nextStatus)
+    await this.options.cmux.setStatus(this.localStatusKey(), nextStatus)
   }
 
   private async applyProgress(next: PresentationSnapshot): Promise<void> {
@@ -976,9 +1003,6 @@ export class CmuxStateCoordinator {
     const nextProgress = next.progress
 
     if (!nextProgress) {
-      if (currentProgress) {
-        await this.options.cmux.clearProgress()
-      }
       return
     }
 
@@ -991,4 +1015,56 @@ export class CmuxStateCoordinator {
 
     await this.options.cmux.setProgress(nextProgress)
   }
+}
+
+function hashString(value: string): number {
+  let hash = 0
+
+  for (let i = 0; i < value.length; i++) {
+    hash = ((hash << 5) - hash + value.charCodeAt(i)) >>> 0
+  }
+
+  return hash
+}
+
+function pluralize(word: string, count: number): string {
+  return count === 1 ? word : `${word}s`
+}
+
+function sanitizeStatusKeyPart(value: string): string {
+  const sanitized = value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")
+  return sanitized || hashString(value).toString(36)
+}
+
+function colorFromSeed(seed: string): string {
+  const hash = hashString(seed)
+  const hue = hash % 360
+
+  return hslToHex(hue, 80, 58)
+}
+
+function hslToHex(hue: number, saturationPercent: number, lightnessPercent: number): string {
+  const saturation = saturationPercent / 100
+  const lightness = lightnessPercent / 100
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation
+  const huePrime = hue / 60
+  const x = chroma * (1 - Math.abs((huePrime % 2) - 1))
+  const match = lightness - chroma / 2
+  const [red, green, blue] = huePrime < 1
+    ? [chroma, x, 0]
+    : huePrime < 2
+      ? [x, chroma, 0]
+      : huePrime < 3
+        ? [0, chroma, x]
+        : huePrime < 4
+          ? [0, x, chroma]
+          : huePrime < 5
+            ? [x, 0, chroma]
+            : [chroma, 0, x]
+
+  return `#${toHex(red + match)}${toHex(green + match)}${toHex(blue + match)}`
+}
+
+function toHex(channel: number): string {
+  return Math.round(channel * 255).toString(16).padStart(2, "0")
 }

@@ -14,24 +14,28 @@ OpenCode hooks → normalizeEvent() → CmuxStateCoordinator → cmux CLI or soc
 ```
 
 The coordinator is a **state machine** — it accumulates session state, tool
-activity, file edits, todos, questions, and permissions, then renders a
-**single sidebar status pill + optional progress bar** on every state change.
-Only one status can be shown at a time, so there is an implicit priority order.
+activity, file edits, todos, questions, and permissions, then renders this
+OpenCode process' **local cmux status pill + optional progress bar** on every
+state change. Multiple OpenCode terminals in the same cmux workspace can show
+multiple pills because each process writes a distinct cmux status key.
+
+Within one plugin instance, only one primary status can be shown at a time, so
+there is an implicit priority order.
 
 ## State Priority Order (highest wins)
 
-| Priority | Condition                 | Status text | Icon          | Color   |
-|----------|---------------------------|-------------|---------------|---------|
-| 1        | Permission pending        | `waiting`   | `lock`        | #ef4444 |
-| 2        | Question pending          | `question`  | `help-circle` | #a855f7 |
-| 3        | Primary session busy      | `working…`  | `terminal`    | #f59e0b |
-| 4        | Primary session error     | `error`     | `alert-circle`| #ef4444 |
-| 5        | Primary session idle+done | `done`      | `check-circle`| #22c55e |
-| —        | No primary session        | *(cleared)* | —             | —       |
+| Priority | Condition                              | Status text                         | Icon          | Color      |
+|----------|----------------------------------------|-------------------------------------|---------------|------------|
+| 1        | Permission pending                     | `waiting`                           | `lock`        | #ef4444    |
+| 2        | Question pending                       | `question`                          | `help-circle` | #a855f7    |
+| 3        | Primary busy, active tool, or subagent | `working [- N tools] [- M subagents]` | `terminal`  | surface accent |
+| 4        | Primary session error                  | `error`                             | `alert-circle`| #ef4444    |
+| 5        | Primary session idle+done              | `done`                              | `check-circle`| #22c55e    |
+| —        | No primary session/activity            | *(cleared)*                         | —             | —          |
 
-This priority is implemented in `buildSnapshot()` in `src/state/presenter.ts`
-(around line 479). **Any change to this method must preserve the priority
-order or explicitly document a new one.**
+This priority is implemented in `buildSnapshot()` in `src/state/presenter.ts`.
+**Any change to this method must preserve the priority order or explicitly
+document a new one.**
 
 ## How to Add a New Event Type
 
@@ -97,6 +101,75 @@ Coding rules for this repo:
 - Tests should document behavior in `tests/events.test.ts`,
   `tests/plugin.test.ts`, and `tests/presenter.test.ts`; use helpers from
   `tests/helpers/index.ts` for coordinator tests.
+- `src/index.ts` schedules `coordinator.initialize()` and `syncGitState()` in a
+  zero-delay timer after hooks are returned. Those startup tasks are deliberately
+  lazy and best-effort so plugin construction does not block OpenCode hook
+  registration.
+- `process.once("beforeExit")` calls `coordinator.cleanup()` as a best-effort
+  terminal cleanup, but OpenCode still has no real plugin dispose hook. Do not
+  rely on cleanup for correctness; state transitions must be correct while live.
+
+## Runtime Behavior Contracts
+
+These are easy to break because they emerge from several files rather than one
+obvious API:
+- `renderNow()` diffs the next `PresentationSnapshot` against `currentSnapshot`
+  before calling cmux. Identical status and progress payloads are skipped; this
+  is the main anti-flicker/idempotence layer.
+- cmux stores custom status pills as workspace-local `statusEntries[key]`.
+  Multiple visible pills require **different keys in the same workspace**.
+  The status command's `--tab=<uuid>` targets the cmux workspace/sidebar tab;
+  it is not the per-terminal identity. Status entries have no `source` or
+  `title` field, so do not try to distinguish OpenCode processes that way.
+- Main sidebar status is written to a local per-surface key, not directly to the
+  base `statusKey`. The key is `${statusKey}:${sanitizeStatusKeyPart(seed)}`.
+  With complete cmux IDs, `seed` is the joined tuple
+  `workspaceID:tabID:surfaceID`. If `surfaceID` is missing, the seed also uses
+  primary session ID, project ID, project root, and the process PID to reduce
+  collisions. In current cmux, `CMUX_TAB_ID` is a backward-compatible alias for
+  the workspace ID, while `CMUX_SURFACE_ID` is the per-terminal/session identity.
+  Include `surfaceID` in the key seed or parallel OpenCode terminals in one
+  workspace can overwrite each other's pill.
+- Working status is a count summary, not a tool-name display:
+  `working`, `working - 1 tool`, `working - 3 subagents`, or
+  `working - N tools - M subagents`. Zero-count segments are intentionally
+  omitted. It can be driven by primary busy state, local active tools, or busy
+  subagents, because hook ordering can report tool or subagent activity before
+  the primary busy event arrives.
+- Working status color is a deterministic HSL accent derived from the same cmux
+  status seed. It is a visual hint for distinguishing surfaces, not a guarantee
+  of global uniqueness across every possible surface.
+- The old auxiliary keys `opencode:tools`, `opencode:subagents`, and
+  `opencode:todos` are legacy cleanup targets now. Current tool/subagent counts
+  are folded into the per-surface working summary, and todos influence
+  progress/logs rather than rendering a separate status pill.
+- Primary terminal paths (`idle`, `error`, stale-session clear, done-timeout
+  clear, and deletion/cleanup) must clear transient auxiliary state: active
+  tools, todo state, and busy subagent activity. This prevents stale counts from
+  leaking into `done`, `error`, or the next session.
+- `clearPresentationBestEffort()` and startup/session-start cleanup only run when
+  `cmux.preciseTabTargeting` is true. Without a real tab ID, clearing can wipe
+  another workspace/tab, so tests expect cleanup to be skipped. Safe cleanup
+  clears the local per-surface status key, the base status key, and legacy
+  auxiliary keys for migration cleanup. Startup/session-start cleanup must not
+  clear shared workspace progress or logs. Primary cleanup and local status
+  transitions also must not call `clearProgress()`, because cmux progress has no
+  key/source/surface ownership check and clearing can wipe another OpenCode
+  surface's live bar. The one allowed clear is immediately after rendering
+  primary completion at `1.0` and sending the done notification, so the native
+  progress bar does not linger at 100%.
+- `OpencodeSessionResolver` has a 5s negative cache after session lookup
+  failures. `fresh: true` bypasses a successful cache entry, but it does not
+  bypass recent-failure suppression; callers get fallback primary metadata.
+- Socket clients self-disable after `ENOENT` or `ECONNREFUSED` and log the
+  connection failure once. CLI clients are also best-effort: missing `cmux`
+  (`ENOENT`) is logged once, and non-zero exits are logged with trimmed output.
+- `syncGitState()` reports branch metadata only when git integration is enabled
+  and `detectGitInfo()` finds a branch. It also reruns after bash commands whose
+  command string contains `git`. Git probing is capped with a 500ms timeout.
+- `ProgressTracker` uses a high-water mark. Working progress starts at `0.1`,
+  never reaches `1.0` while active, waiting states have a `0.5` floor, and idle
+  always reports `1.0`.
 
 ## npm Release Work
 
@@ -153,6 +226,11 @@ Key differences from CLI:
   the documented JSON request is correct, but observed macOS cmux sockets can
   accept `notification.create`/`notification.clear` and keep the connection open,
   which makes response-waiting code report false `ETIMEDOUT` failures.
+- Question notifications should put the question text in `body`, not only
+  `subtitle`. Done notifications already use `body`, and cmux/macOS notification
+  click behavior has been observed to feel inconsistent when question text is
+  subtitle-only. Keep question notifications body-based unless cmux behavior
+  changes.
 - Use response parsing only for socket API calls where this plugin needs the
   returned `result` or must act on `ok:false`.
 
@@ -162,6 +240,16 @@ that needs quoting.
 
 Command builders live in `src/cmux/commands.ts` — CLI builders return
 `string[]`, socket builders return `string`.
+
+cmux identity details that matter for status keys:
+- `CMUX_WORKSPACE_ID` is the sidebar workspace/tab target.
+- `CMUX_TAB_ID` is kept for backward compatibility and currently matches the
+  workspace ID in cmux-managed terminals.
+- `CMUX_SURFACE_ID` is the individual terminal/browser surface. Use it to make
+  OpenCode process status keys unique inside one workspace.
+- Socket sidebar commands still use `--tab=<workspace-id>` because they mutate
+  workspace-local metadata. Do not pass `surfaceID` as `--tab`; include it in
+  the status key instead.
 
 Socket detection caveats:
 - Default socket paths from the docs are `/tmp/cmux.sock`,
@@ -194,8 +282,14 @@ Socket detection caveats:
   most one cmux call per 200ms. Sidebar logs are rate-limited to 5/sec.
 - **Startup cleanup must be guarded** — `initialize()` runs lazily after plugin
   construction. It must not clear presentation state once a busy session,
-  active tool, current status, or progress snapshot exists; otherwise it can
-  wipe a live cmux progress bar while the coordinator still thinks it is visible.
+  active tool, current status, or progress snapshot exists. It also must not
+  clear shared progress/log resources that may belong to another OpenCode
+  process in the same cmux workspace.
+- **Progress clearing is intentionally narrow** — cmux progress is workspace
+  metadata, not a keyed status entry. `applyProgress()` may write updated labels
+  and values, but a local transition to no progress must not call
+  `clearProgress()`. Only primary completion should clear after the final 100%
+  update has been rendered.
 - **Primary completion ordering matters** — on primary idle, render the final
   `done` status and `1.0` progress before sending the completion notification.
   Subagent idle/completion must not drive the primary session to `done` or
@@ -221,7 +315,9 @@ Key defaults to know:
 - `progressEnabled`: `true`
 - `keepDoneStatus`: `true` (show "done" pill after session ends)
 - `notifySubagents`: `false` (desktop notifications for subagent events off by default)
+- `gitIntegration`: `true` (report branch/dirty metadata to cmux)
 - `staleSessionTimeoutMs`: `0` (disabled — no auto-clear of stuck sessions)
+- `doneTimeoutMs`: `10000` (clear lingering done pill after 10s; tests often set this to `0`)
 
 ## Testing
 
@@ -234,13 +330,37 @@ bun build src/index.ts --outdir=dist   # build check
 Test helpers (`FakeCmuxClient`, `FakeSessionResolver`, `noopLogger`,
 `createCoordinator`) are in `tests/helpers/index.ts`.
 
+Presenter/coordinator tests should use `createCoordinator()` rather than
+hand-rolling fakes. Its default config intentionally differs from runtime in one
+important way: `doneTimeoutMs` is `0` so done-state tests are deterministic unless
+a test opts into the timer. `FakeCmuxClient` records calls only; use
+`cmux.reset()` between phases and `await coordinator.flush()` before asserting on
+coalesced renders. The default fake cmux IDs are `workspace:1`, `tab:1`, and
+`surface:1`, so the default local status key is
+`opencode:workspace-1-tab-1-surface-1`.
+
+Timing behavior is part of the public contract: render throttling coalesces rapid
+state changes, sidebar logs are capped at 5/sec, stale-session timers and
+done-state timers are real timers, and `dispose()`/`cleanup()` must cancel pending
+timers for deterministic tests. Surface behavior is also contractual: working
+status keys and colors are deterministic per cmux identity tuple, and tests
+should cover any change to the local status-key fallback chain, zero-count
+summary formatting, and legacy key cleanup.
+
+Command-builder tests are exact protocol tests, not snapshots to casually update.
+CLI builders use hyphenated command names and `--workspace`/`--surface`; socket
+text builders use underscored names, newline termination, `--tab=<id>`, quoted
+multi-word values, and `--` before log messages. JSON socket builders strip
+`undefined`, preserve `null`, increment request IDs, and use
+`notification.create` / `notification.clear`.
+
 ## File Inventory
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| `src/index.ts` | Plugin entry point, hook wiring | ~156 |
+| `src/index.ts` | Plugin entry point, hook wiring | ~174 |
 | `src/types.ts` | All shared interfaces | ~138 |
-| `src/config.ts` | Env-var config (14 options) | ~69 |
+| `src/config.ts` | Env-var config (16 options) | ~106 |
 | `src/events.ts` | Event normalization | ~222 |
 | `src/logger.ts` | Plugin logger wrapper | small |
 | `src/cmux/detect.ts` | cmux environment detection | small |
@@ -248,7 +368,7 @@ Test helpers (`FakeCmuxClient`, `FakeSessionResolver`, `noopLogger`,
 | `src/cmux/client.ts` | CmuxClient factory | small |
 | `src/cmux/socket-client.ts` | Unix socket transport | medium |
 | `src/opencode/session-resolver.ts` | Session metadata cache | ~58 |
-| `src/state/presenter.ts` | **CmuxStateCoordinator** (main) | ~725 |
+| `src/state/presenter.ts` | **CmuxStateCoordinator** (main) | ~1062 |
 | `src/state/session-state.ts` | Session types + helpers | small |
 | `src/state/progress-tracker.ts` | Progress estimation | small |
 | `src/state/project-context.ts` | Project context resolution | small |

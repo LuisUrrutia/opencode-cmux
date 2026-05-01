@@ -53,9 +53,9 @@ export class FakeCmuxClient implements CmuxClient {
   } = {}) {
     this.transport = options.transport ?? "cli"
     this.preciseTabTargeting = options.preciseTabTargeting ?? true
-    this.workspaceID = options.workspaceID ?? "workspace:1"
-    this.tabID = options.tabID ?? "tab:1"
-    this.surfaceID = options.surfaceID ?? "surface:1"
+    this.workspaceID = "workspaceID" in options ? options.workspaceID : "workspace:1"
+    this.tabID = "tabID" in options ? options.tabID : "tab:1"
+    this.surfaceID = "surfaceID" in options ? options.surfaceID : "surface:1"
   }
 
   public async clearNotifications(): Promise<void> {

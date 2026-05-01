@@ -79,9 +79,11 @@ The main sidebar status uses this priority order:
 4. Primary session error: `error`
 5. Primary session idle: `done`
 
-Only one main status wins at a time. Extra status pills can also appear for active tools, busy subagents, and todo progress.
+Only one main status wins at a time per OpenCode surface. Tool and subagent counts are folded into that surface's `working` status instead of rendering separate pills.
 
 Progress is an estimate based on tool calls, elapsed time, and todos. It is throttled, never moves backward during a session, and never reaches `1.0` until the primary session goes idle. Sidebar renders are throttled, so updates are near live but not every raw event becomes a separate cmux call.
+
+cmux status pills are keyed per OpenCode surface, so multiple OpenCode terminals in one cmux workspace can show separate `working` or `done` pills. Progress, logs, and git branch metadata are workspace-level cmux resources, so they are shared by all OpenCode terminals in that workspace. To avoid wiping another terminal's live progress, the plugin does not clear the shared progress bar during local cleanup; it only clears after rendering primary completion at `100%`.
 
 When git integration is enabled, the plugin reports branch and dirty state during initialization and after OpenCode runs git commands through the bash tool.
 
@@ -106,7 +108,7 @@ Boolean values accept `1`, `true`, `yes`, and `on` for true. They accept `0`, `f
 | Variable | Default | Description |
 | --- | --- | --- |
 | `OPENCODE_CMUX_BIN` | `cmux` | cmux executable used by CLI transport. |
-| `OPENCODE_CMUX_STATUS_KEY` | `opencode` | Base sidebar status key. Extra statuses use this as a prefix. |
+| `OPENCODE_CMUX_STATUS_KEY` | `opencode` | Base sidebar status key. Per-surface statuses and legacy cleanup keys use this as a prefix. |
 | `OPENCODE_CMUX_TRANSPORT` | `auto` | `auto`, `socket`, or `cli`. |
 | `OPENCODE_CMUX_NOTIFY_SUBAGENTS` | `false` | Send desktop notifications for subagent completion and errors. |
 | `OPENCODE_CMUX_LOG_SUBAGENTS` | `true` | Log subagent lifecycle events in the sidebar. |
@@ -137,7 +139,7 @@ If needed, set `CMUX_SOCKET_PATH` or `CMUX_SOCKET` to the socket path exposed by
 
 ### Sidebar updates affect the wrong tab
 
-Socket mode targets `CMUX_TAB_ID` when it is available. If cmux does not expose `CMUX_TAB_ID`, sidebar updates may only be scoped to the workspace.
+Socket mode targets the cmux workspace for sidebar metadata and uses `CMUX_SURFACE_ID` in the status key so separate OpenCode terminals do not overwrite each other's status pill. If cmux does not expose `CMUX_SURFACE_ID`, the plugin falls back to project/session/process details, but stale status cleanup is less precise.
 
 ### Status stays on working
 

@@ -3,7 +3,15 @@ import { execFileSync } from "node:child_process"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { FakeCmuxClient, createCoordinator } from "./helpers/index.ts"
+import { FakeCmuxClient, createCoordinator, type FakeCall } from "./helpers/index.ts"
+
+const DEFAULT_LOCAL_STATUS_KEY = "opencode:workspace-1-tab-1-surface-1"
+
+function primaryStatusColor(calls: FakeCall[]): string | undefined {
+  return calls.find(
+    (call) => call.type === "setStatus" && call.key.startsWith("opencode:"),
+  )?.payload.color
+}
 
 describe("FakeCmuxClient", () => {
   test("has transport property set to cli", () => {
@@ -20,10 +28,21 @@ describe("CmuxStateCoordinator", () => {
 
     expect(cmux.calls).toEqual([
       { type: "clearNotifications" },
+      { type: "clearStatus", key: DEFAULT_LOCAL_STATUS_KEY },
       { type: "clearStatus", key: "opencode" },
-      { type: "clearProgress" },
-      { type: "clearLog" },
+      { type: "clearStatus", key: "opencode:tools" },
+      { type: "clearStatus", key: "opencode:subagents" },
+      { type: "clearStatus", key: "opencode:todos" },
     ])
+  })
+
+  test("initialize does not clear shared progress or logs", async () => {
+    const { coordinator, cmux } = createCoordinator({})
+
+    await coordinator.initialize()
+
+    expect(cmux.calls.some((call) => call.type === "clearProgress")).toBe(false)
+    expect(cmux.calls.some((call) => call.type === "clearLog")).toBe(false)
   })
 
   test("initialize skips stale cleanup without precise tab targeting", async () => {
@@ -82,9 +101,49 @@ describe("CmuxStateCoordinator", () => {
     await coordinator.handleSessionCreated("primary")
 
     expect(cmux.calls).toContainEqual({ type: "clearNotifications" })
-    expect(cmux.calls).toContainEqual({ type: "clearStatus", key: "opencode" })
-    expect(cmux.calls).toContainEqual({ type: "clearProgress" })
-    expect(cmux.calls).toContainEqual({ type: "clearLog" })
+    expect(cmux.calls).toContainEqual({ type: "clearStatus", key: DEFAULT_LOCAL_STATUS_KEY })
+    expect(cmux.calls).toContainEqual({ type: "clearStatus", key: "opencode:tools" })
+    expect(cmux.calls).toContainEqual({ type: "clearStatus", key: "opencode:subagents" })
+    expect(cmux.calls).toContainEqual({ type: "clearStatus", key: "opencode:todos" })
+    expect(cmux.calls.some((call) => call.type === "clearProgress")).toBe(false)
+    expect(cmux.calls.some((call) => call.type === "clearLog")).toBe(false)
+  })
+
+  test("primary session start only clears local status resources", async () => {
+    const firstTab = new FakeCmuxClient({ workspaceID: "workspace:1", tabID: "tab:1", surfaceID: "surface:1" })
+    const secondTab = new FakeCmuxClient({ workspaceID: "workspace:1", tabID: "tab:1", surfaceID: "surface:2" })
+    const first = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    }, { cmux: firstTab })
+    const second = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    }, { cmux: secondTab })
+
+    await first.coordinator.handleSessionStatus("primary", "busy")
+    await first.coordinator.flush()
+    firstTab.reset()
+
+    await second.coordinator.handleSessionCreated("primary")
+
+    expect(secondTab.calls).toContainEqual({
+      type: "clearStatus",
+      key: "opencode:workspace-1-tab-1-surface-2",
+    })
+    expect(secondTab.calls).not.toContainEqual({
+      type: "clearStatus",
+      key: "opencode:workspace-1-tab-1-surface-1",
+    })
+    expect(secondTab.calls.some((call) => call.type === "clearProgress")).toBe(false)
+    expect(secondTab.calls.some((call) => call.type === "clearLog")).toBe(false)
+    expect(firstTab.calls).toEqual([])
   })
 
   test("does not clear stale presentation on session start without precise tab targeting", async () => {
@@ -100,7 +159,10 @@ describe("CmuxStateCoordinator", () => {
     await coordinator.handleSessionCreated("primary")
 
     expect(cmux.calls).not.toContainEqual({ type: "clearNotifications" })
-    expect(cmux.calls).not.toContainEqual({ type: "clearStatus", key: "opencode" })
+    expect(cmux.calls).not.toContainEqual({ type: "clearStatus", key: DEFAULT_LOCAL_STATUS_KEY })
+    expect(cmux.calls).not.toContainEqual({ type: "clearStatus", key: "opencode:tools" })
+    expect(cmux.calls).not.toContainEqual({ type: "clearStatus", key: "opencode:subagents" })
+    expect(cmux.calls).not.toContainEqual({ type: "clearStatus", key: "opencode:todos" })
     expect(cmux.calls).not.toContainEqual({ type: "clearProgress" })
     expect(cmux.calls).not.toContainEqual({ type: "clearLog" })
   })
@@ -121,9 +183,12 @@ describe("CmuxStateCoordinator", () => {
     await coordinator.handleSessionDeleted("primary")
 
     expect(cmux.calls).toContainEqual({ type: "clearNotifications" })
-    expect(cmux.calls).toContainEqual({ type: "clearStatus", key: "opencode" })
-    expect(cmux.calls).toContainEqual({ type: "clearProgress" })
-    expect(cmux.calls).toContainEqual({ type: "clearLog" })
+    expect(cmux.calls).toContainEqual({ type: "clearStatus", key: DEFAULT_LOCAL_STATUS_KEY })
+    expect(cmux.calls).toContainEqual({ type: "clearStatus", key: "opencode:tools" })
+    expect(cmux.calls).toContainEqual({ type: "clearStatus", key: "opencode:subagents" })
+    expect(cmux.calls).toContainEqual({ type: "clearStatus", key: "opencode:todos" })
+    expect(cmux.calls.some((call) => call.type === "clearProgress")).toBe(false)
+    expect(cmux.calls.some((call) => call.type === "clearLog")).toBe(false)
   })
 
   test("session.updated refreshes renamed session metadata", async () => {
@@ -237,14 +302,13 @@ describe("CmuxStateCoordinator", () => {
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "working",
         icon: "terminal",
-        color: "#f59e0b",
+        color: expect.any(String),
       },
     })
-
     // Progress value is time-dependent, so use closeTo for the value
     const busyProgress = cmux.calls.find(
       (c) => c.type === "setProgress" && c.payload.label === "demo: Implement feature",
@@ -261,11 +325,12 @@ describe("CmuxStateCoordinator", () => {
       "setProgress",
       "log",
       "notify",
+      "clearProgress",
     ])
     expect(cmux.calls).toEqual([
       {
         type: "setStatus",
-        key: "opencode",
+        key: DEFAULT_LOCAL_STATUS_KEY,
         payload: {
           text: "done",
           icon: "check-circle",
@@ -294,7 +359,83 @@ describe("CmuxStateCoordinator", () => {
           body: "Implement feature",
         },
       },
+      {
+        type: "clearProgress",
+      },
     ])
+  })
+
+  test("working status key and color are stable per cmux workspace/surface", async () => {
+    const firstTab = new FakeCmuxClient({ workspaceID: "workspace:1", tabID: "tab:1", surfaceID: "surface:1" })
+    const secondTab = new FakeCmuxClient({ workspaceID: "workspace:1", tabID: "tab:1", surfaceID: "surface:2" })
+    const first = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    }, { cmux: firstTab })
+    const second = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    }, { cmux: secondTab })
+
+    await first.coordinator.handleSessionStatus("primary", "busy")
+    await second.coordinator.handleSessionStatus("primary", "busy")
+
+    const firstColor = primaryStatusColor(firstTab.calls)
+    const secondColor = primaryStatusColor(secondTab.calls)
+
+    expect(firstColor).toEqual(expect.any(String))
+    expect(secondColor).toEqual(expect.any(String))
+    expect(secondColor).not.toBe(firstColor)
+
+    expect(firstTab.calls).toContainEqual(expect.objectContaining({
+      type: "setStatus",
+      key: "opencode:workspace-1-tab-1-surface-1",
+    }))
+    expect(secondTab.calls).toContainEqual(expect.objectContaining({
+      type: "setStatus",
+      key: "opencode:workspace-1-tab-1-surface-2",
+    }))
+
+    const firstTabAgain = new FakeCmuxClient({ workspaceID: "workspace:1", tabID: "tab:1", surfaceID: "surface:1" })
+    const firstAgain = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    }, { cmux: firstTabAgain })
+
+    await firstAgain.coordinator.handleSessionStatus("primary", "busy")
+
+    expect(primaryStatusColor(firstTabAgain.calls)).toBe(firstColor)
+  })
+
+  test("status key fallback includes project and process when surface id is missing", async () => {
+    const cmux = new FakeCmuxClient({
+      workspaceID: "workspace:1",
+      tabID: "tab:1",
+      surfaceID: undefined,
+    })
+    const { coordinator } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    }, { cmux, root: "/tmp/demo-app", label: "demo-app" })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+
+    expect(cmux.calls).toContainEqual(expect.objectContaining({
+      type: "setStatus",
+      key: `opencode:workspace-1-tab-1-primary-demo-tmp-demo-app-pid-${process.pid}`,
+    }))
   })
 
   test("subagent idle does not complete the primary session", async () => {
@@ -333,11 +474,11 @@ describe("CmuxStateCoordinator", () => {
     ).toBe(false)
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "working",
         icon: "terminal",
-        color: "#f59e0b",
+        color: expect.any(String),
       },
     })
   })
@@ -363,11 +504,20 @@ describe("CmuxStateCoordinator", () => {
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
-        text: "working · 1 subagent",
+        text: "working",
         icon: "terminal",
-        color: "#f59e0b",
+        color: expect.any(String),
+      },
+    })
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: DEFAULT_LOCAL_STATUS_KEY,
+      payload: {
+        text: "working - 1 subagent",
+        icon: "terminal",
+        color: expect.any(String),
       },
     })
 
@@ -377,7 +527,7 @@ describe("CmuxStateCoordinator", () => {
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "question",
         icon: "help-circle",
@@ -388,7 +538,7 @@ describe("CmuxStateCoordinator", () => {
       type: "notify",
       payload: {
         title: "Question: demo",
-        subtitle: "Approve release note?",
+        body: "Approve release note?",
       },
     })
 
@@ -398,16 +548,16 @@ describe("CmuxStateCoordinator", () => {
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
-        text: "working · 1 subagent",
+        text: "working - 1 subagent",
         icon: "terminal",
-        color: "#f59e0b",
+        color: expect.any(String),
       },
     })
   })
 
-  test("tool started during busy session updates status text", async () => {
+  test("tool started during busy session updates tab summary status", async () => {
     const { coordinator, cmux } = createCoordinator({
       primary: {
         id: "primary",
@@ -422,14 +572,13 @@ describe("CmuxStateCoordinator", () => {
     await coordinator.handleToolStarted("bash", { command: "npm test" })
     await coordinator.flush()
 
-    // Status should now show "working: bash"
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
-        text: "working: bash",
+        text: "working - 1 tool",
         icon: "terminal",
-        color: "#f59e0b",
+        color: expect.any(String),
       },
     })
 
@@ -461,14 +610,14 @@ describe("CmuxStateCoordinator", () => {
     await coordinator.handleToolCompleted("bash", { command: "npm test" })
     await coordinator.flush()
 
-    // Status should revert to just "working" (no tool suffix)
+    // Tool count is folded back into the tab summary status.
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "working",
         icon: "terminal",
-        color: "#f59e0b",
+        color: expect.any(String),
       },
     })
 
@@ -483,7 +632,45 @@ describe("CmuxStateCoordinator", () => {
     })
   })
 
-  test("multiple concurrent tools show count in status", async () => {
+  test("primary idle clears active counts from the tab summary", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Implement feature",
+        kind: "primary",
+      },
+      subagent: {
+        id: "subagent",
+        title: "Write docs",
+        parentID: "primary",
+        kind: "subagent",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleSessionStatus("subagent", "busy")
+    await coordinator.handleToolStarted("bash", { command: "npm test" })
+    await coordinator.handleTodoUpdated([
+      { text: "Write tests", completed: false },
+    ])
+    await coordinator.flush()
+    cmux.reset()
+
+    await coordinator.handleSessionStatus("primary", "idle")
+    await coordinator.flush()
+
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: DEFAULT_LOCAL_STATUS_KEY,
+      payload: {
+        text: "done",
+        icon: "check-circle",
+        color: "#22c55e",
+      },
+    })
+  })
+
+  test("multiple concurrent tools show count in tab summary status", async () => {
     const { coordinator, cmux } = createCoordinator({
       primary: {
         id: "primary",
@@ -503,11 +690,11 @@ describe("CmuxStateCoordinator", () => {
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
-        text: "working: 3 tools",
+        text: "working - 3 tools",
         icon: "terminal",
-        color: "#f59e0b",
+        color: expect.any(String),
       },
     })
   })
@@ -536,14 +723,14 @@ describe("CmuxStateCoordinator", () => {
     await coordinator.handleToolCompleted("bash", { command: "npm build" })
     await coordinator.flush()
 
-    // Should show no tools, just "working"
+    // Should remove the active tool from the tab summary.
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "working",
         icon: "terminal",
-        color: "#f59e0b",
+        color: expect.any(String),
       },
     })
   })
@@ -572,12 +759,44 @@ describe("CmuxStateCoordinator", () => {
       },
     })
 
-    // No status update since session isn't busy (snapshot returns {})
-    const statusCalls = cmux.calls.filter((c) => c.type === "setStatus")
-    expect(statusCalls).toHaveLength(0)
+    // Local tool activity should still mark this tab as working even if the
+    // primary busy event has not arrived yet.
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: DEFAULT_LOCAL_STATUS_KEY,
+      payload: {
+        text: "working - 1 tool",
+        icon: "terminal",
+        color: expect.any(String),
+      },
+    })
   })
 
-  test("tool with subagent shows combined status", async () => {
+  test("subagent activity without primary busy still marks tab working", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      subagent: {
+        id: "subagent",
+        title: "Write docs",
+        parentID: "primary",
+        kind: "subagent",
+      },
+    })
+
+    await coordinator.handleSessionStatus("subagent", "busy")
+    await coordinator.flush()
+
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: DEFAULT_LOCAL_STATUS_KEY,
+      payload: {
+        text: "working - 1 subagent",
+        icon: "terminal",
+        color: expect.any(String),
+      },
+    })
+  })
+
+  test("tool with subagent shows combined tab summary status", async () => {
     const { coordinator, cmux } = createCoordinator({
       primary: {
         id: "primary",
@@ -601,11 +820,11 @@ describe("CmuxStateCoordinator", () => {
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
-        text: "working: bash · 1 subagent",
+        text: "working - 1 tool - 1 subagent",
         icon: "terminal",
-        color: "#f59e0b",
+        color: expect.any(String),
       },
     })
   })
@@ -771,11 +990,11 @@ describe("CmuxStateCoordinator", () => {
     // After deleting primary, status should be cleared (snapshot returns {})
     expect(cmux.calls).toContainEqual({
       type: "clearStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
     })
   })
 
-  test("session deleted clears primary state and progress", async () => {
+  test("session deleted clears primary state without clearing shared progress", async () => {
     const { coordinator, cmux } = createCoordinator({
       primary: {
         id: "primary",
@@ -790,10 +1009,85 @@ describe("CmuxStateCoordinator", () => {
     await coordinator.handleSessionDeleted("primary")
     await coordinator.flush()
 
-    // Should clear progress since primary is gone
-    expect(cmux.calls).toContainEqual({
-      type: "clearProgress",
+    // Progress is a shared cmux workspace resource, so local cleanup should not
+    // clear it and risk wiping another OpenCode surface's live progress.
+    expect(cmux.calls.some((call) => call.type === "clearProgress")).toBe(false)
+  })
+
+  test("local done timeout does not clear shared progress", async () => {
+    const { coordinator, cmux, config } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
     })
+    config.doneTimeoutMs = 50
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleSessionStatus("primary", "idle")
+    await coordinator.flush()
+    cmux.reset()
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    expect(cmux.calls).toContainEqual({
+      type: "clearStatus",
+      key: DEFAULT_LOCAL_STATUS_KEY,
+    })
+    expect(cmux.calls.some((call) => call.type === "clearProgress")).toBe(false)
+  })
+
+  test("local error transition does not clear shared progress", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.flush()
+    cmux.reset()
+
+    await coordinator.handleSessionError("primary")
+    await coordinator.flush()
+
+    expect(cmux.calls).toContainEqual({
+      type: "setStatus",
+      key: DEFAULT_LOCAL_STATUS_KEY,
+      payload: {
+        text: "error",
+        icon: "alert-circle",
+        color: "#ef4444",
+      },
+    })
+    expect(cmux.calls.some((call) => call.type === "clearProgress")).toBe(false)
+  })
+
+  test("primary completion clears progress after rendering 100 percent", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    cmux.reset()
+
+    await coordinator.handleSessionStatus("primary", "idle")
+    await coordinator.flush()
+
+    const progressIndex = cmux.calls.findIndex((call) => (
+      call.type === "setProgress" && call.payload.value === 1
+    ))
+    const clearIndex = cmux.calls.findIndex((call) => call.type === "clearProgress")
+
+    expect(progressIndex).toBeGreaterThanOrEqual(0)
+    expect(clearIndex).toBeGreaterThan(progressIndex)
   })
 
   test("session compacted logs informational message", async () => {
@@ -862,6 +1156,23 @@ describe("CmuxStateCoordinator", () => {
     })
   })
 
+  test("todo updated no longer renders a separate todo status", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleTodoUpdated([
+      { text: "Write tests", completed: true },
+      { text: "Fix bug", completed: true },
+    ])
+
+    expect(cmux.calls.some((c) => c.type === "setStatus")).toBe(false)
+  })
+
   test("todo updated with empty list logs 0/0", async () => {
     const { coordinator, cmux } = createCoordinator({
       primary: {
@@ -881,6 +1192,27 @@ describe("CmuxStateCoordinator", () => {
         message: "demo: todos: 0/0 complete",
       },
     })
+  })
+
+  test("todo updated with empty list does not render status changes", async () => {
+    const { coordinator, cmux } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+    })
+
+    await coordinator.handleTodoUpdated([
+      { text: "Write tests", completed: false },
+    ])
+    await coordinator.flush()
+    cmux.reset()
+
+    await coordinator.handleTodoUpdated([])
+    await coordinator.flush()
+
+    expect(cmux.calls.some((c) => c.type === "clearStatus")).toBe(false)
   })
 
   test("todo updated respects logTodos config", async () => {
@@ -933,7 +1265,8 @@ describe("CmuxStateCoordinator", () => {
     ).length
     expect(statusCallsBeforeFlush).toBe(statusCallsAfterFirst)
 
-    // Flush forces the deferred render — only ONE additional setStatus
+    // Flush forces the deferred render. The tab summary is updated once with
+    // the final tool count.
     await coordinator.flush()
 
     const statusCallsAfterFlush = cmux.calls.filter(
@@ -941,17 +1274,13 @@ describe("CmuxStateCoordinator", () => {
     ).length
     expect(statusCallsAfterFlush).toBe(statusCallsAfterFirst + 1)
 
-    // The final status should reflect 3 active tools
-    const lastStatus = cmux.calls
-      .filter((c) => c.type === "setStatus")
-      .pop()!
-    expect(lastStatus).toEqual({
+    expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
-        text: "working: 3 tools",
+        text: "working - 3 tools",
         icon: "terminal",
-        color: "#f59e0b",
+        color: expect.any(String),
       },
     })
   })
@@ -995,11 +1324,11 @@ describe("CmuxStateCoordinator", () => {
     // Confirm we're in "working" state
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "working",
         icon: "terminal",
-        color: "#f59e0b",
+        color: expect.any(String),
       },
     })
 
@@ -1022,7 +1351,7 @@ describe("CmuxStateCoordinator", () => {
     const lastStatus = statusCalls.pop()!
     expect(lastStatus).toEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "done",
         icon: "check-circle",
@@ -1145,7 +1474,7 @@ describe("CmuxStateCoordinator", () => {
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "error",
         icon: "alert-circle",
@@ -1191,7 +1520,7 @@ describe("CmuxStateCoordinator", () => {
     // Status should be "error", not "waiting" (permission should be cleared)
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "error",
         icon: "alert-circle",
@@ -1238,7 +1567,7 @@ describe("CmuxStateCoordinator", () => {
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "done",
         icon: "check-circle",
@@ -1268,7 +1597,7 @@ describe("CmuxStateCoordinator", () => {
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "waiting",
         icon: "lock",
@@ -1338,11 +1667,11 @@ describe("CmuxStateCoordinator", () => {
     // Should revert to working status since primary is still busy
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: expect.objectContaining({
         text: expect.stringContaining("working"),
         icon: "terminal",
-        color: "#f59e0b",
+        color: expect.any(String),
       }),
     })
   })
@@ -1382,7 +1711,7 @@ describe("CmuxStateCoordinator", () => {
 
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "waiting",
         icon: "lock",
@@ -1395,7 +1724,7 @@ describe("CmuxStateCoordinator", () => {
   // Done timeout auto-clear
   // ---------------------------------------------------------------------------
 
-  test("done timeout clears sidebar after idle", async () => {
+  test("done timeout clears per-tab status after idle", async () => {
     const { coordinator, cmux, config } = createCoordinator({
       primary: {
         id: "primary",
@@ -1413,7 +1742,7 @@ describe("CmuxStateCoordinator", () => {
     // Should show "done" immediately
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "done",
         icon: "check-circle",
@@ -1426,13 +1755,47 @@ describe("CmuxStateCoordinator", () => {
     // Wait for the done timer to fire
     await new Promise((resolve) => setTimeout(resolve, 100))
 
-    // Sidebar should now be cleared
+    // The per-tab status should now be cleared, but workspace progress is shared.
     expect(cmux.calls).toContainEqual({
       type: "clearStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
     })
+    expect(cmux.calls.some((call) => call.type === "clearProgress")).toBe(false)
+
+    await coordinator.dispose()
+  })
+
+  test("done timeout clears per-tab status created while done is visible", async () => {
+    const { coordinator, cmux, config } = createCoordinator({
+      primary: {
+        id: "primary",
+        title: "Build plugin",
+        kind: "primary",
+      },
+      subagent: {
+        id: "subagent",
+        title: "Write docs",
+        parentID: "primary",
+        kind: "subagent",
+      },
+    })
+
+    config.doneTimeoutMs = 50
+
+    await coordinator.handleSessionStatus("primary", "busy")
+    await coordinator.handleSessionStatus("primary", "idle")
+    await coordinator.handleSessionStatus("subagent", "busy")
+    await coordinator.handleTodoUpdated([
+      { text: "Document release", completed: false },
+    ])
+    await coordinator.flush()
+    cmux.reset()
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
     expect(cmux.calls).toContainEqual({
-      type: "clearProgress",
+      type: "clearStatus",
+      key: DEFAULT_LOCAL_STATUS_KEY,
     })
 
     await coordinator.dispose()
@@ -1487,7 +1850,7 @@ describe("CmuxStateCoordinator", () => {
     // Should show "done"
     expect(cmux.calls).toContainEqual({
       type: "setStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
       payload: {
         text: "done",
         icon: "check-circle",
@@ -1526,7 +1889,7 @@ describe("CmuxStateCoordinator", () => {
     // With keepDoneStatus=false, sidebar is cleared immediately (no "done" pill)
     expect(cmux.calls).toContainEqual({
       type: "clearStatus",
-      key: "opencode",
+      key: DEFAULT_LOCAL_STATUS_KEY,
     })
 
     // The notification should still have been sent
@@ -1563,8 +1926,10 @@ describe("CmuxStateCoordinator", () => {
     // Wait past the done timeout
     await new Promise((resolve) => setTimeout(resolve, 100))
 
-    // Dispose should clear once immediately, and the cancelled timer should not clear again.
+    // Dispose should clear the primary status once immediately, and the
+    // cancelled timer should not clear it again. Auxiliary status keys are also
+    // cleared as part of cleanup.
     const clearCalls = cmux.calls.filter((c) => c.type === "clearStatus")
-    expect(clearCalls.length).toBe(1)
+    expect(clearCalls.filter((c) => c.key === "opencode")).toHaveLength(1)
   })
 })
