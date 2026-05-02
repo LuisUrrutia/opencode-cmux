@@ -11,6 +11,10 @@
 
 The plugin is quiet outside cmux. If `CMUX_WORKSPACE_ID` is missing, it returns no hooks and does nothing.
 
+<p align="center">
+  <img src="docs/assets/cmux-sidebar-preview.svg" alt="cmux sidebar preview">
+</p>
+
 ## At a glance
 
 | | |
@@ -40,7 +44,7 @@ Add the package to your OpenCode config:
 }
 ```
 
-The npm package is `@luisurrutia/opencode-cmux`. Its module entry is `dist/index.js`, and the published files are `dist`, `README.md`, and `LICENSE`.
+The npm package is `@luisurrutia/opencode-cmux`. Its module entry is `dist/index.js`, and the published files include `dist`, `README.md`, `LICENSE`, and `docs/assets`.
 
 ## Local development install
 
